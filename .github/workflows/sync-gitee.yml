@@ -1,8 +1,11 @@
-﻿name: sync-gitee
+name: sync-gitee
 
 # 每次推送到 main / 打 tag 后，将全部分支与标签镜像同步到 Gitee（https://gitee.com/yxpil/NETON）。
-# 凭据存于仓库 Secrets：GITEE_USER / GITEE_PASS（Gitee 账号密码原文）。
-# 用 Basic Auth 头传递凭据，避免密码特殊字符在 URL 中需要转义的问题。
+#
+# 凭据（二选一，推荐令牌）：
+#   GITEE_TOKEN  Gitee 私人令牌（推荐令牌，避免明文密码）
+#   GITEE_USER + GITEE_PASS  Gitee 用户名 + 密码
+# 用 Basic Auth 头传递，避免密码特殊字符在 URL 中需要转义的问题。
 on:
   push:
     branches: [main]
@@ -24,6 +27,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: 检查凭据是否已配置
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_USER: ${{ secrets.GITEE_USER }}
+          GITEE_PASS: ${{ secrets.GITEE_PASS }}
+        run: |
+          if [ -n "$GITEE_TOKEN" ] || { [ -n "$GITEE_USER" ] && [ -n "$GITEE_PASS" ]; }; then
+            echo "gitee_credentials=present" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "### 镜像到 Gitee 失败：凭据未配置"
+            echo
+            echo "本仓库缺少 Gitee 推送凭据，请在 Settings → Secrets and variables → Actions 中添加："
+            echo
+            echo "- \`GITEE_TOKEN\`（推荐）— Gitee 私人令牌"
+            echo "- 或 \`GITEE_USER\` + \`GITEE_PASS\`"
+            echo
+            echo "> 本 workflow 由智能体 BIT 维护，此提示为自动生成。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Gitee 凭据未配置（GITEE_TOKEN 或 GITEE_USER/GITEE_PASS 均为空），跳过镜像"
+          exit 1
+
       - name: 镜像推送到 Gitee
         run: |
           # ① tag push 时 checkout 为 detached HEAD，本地 refs/heads 为空——
@@ -31,9 +58,10 @@ jobs:
           #    改用 origin/*（fetch-depth:0 后必含全部分支）做源，与 checkout 状态无关
           # ② origin/HEAD 是符号引用，不删会被映射成垃圾分支 heads/HEAD
           git update-ref -d refs/remotes/origin/HEAD 2>/dev/null || true
-          git -c "http.extraheader=Authorization: Basic $(printf '%s:%s' "$GITEE_USER" "$GITEE_PASS" | base64)" \
+          USER="${GITEE_USER:-oauth2}"
+          git -c "http.extraheader=Authorization: Basic $(printf '%s:%s' "$USER" "$CRED" | base64)" \
             push --prune --force "https://gitee.com/yxpil/NETON.git" \
             "refs/remotes/origin/*:refs/heads/*" "refs/tags/*:refs/tags/*"
         env:
           GITEE_USER: ${{ secrets.GITEE_USER }}
-          GITEE_PASS: ${{ secrets.GITEE_PASS }}
+          CRED: ${{ secrets.GITEE_TOKEN || secrets.GITEE_PASS }}
