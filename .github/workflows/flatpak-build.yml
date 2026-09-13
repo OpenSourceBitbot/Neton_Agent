@@ -1,4 +1,4 @@
-﻿name: flatpak-build
+name: flatpak-build
 
 # 构建 Flatpak 包并产出 .flatpak bundle（后续可 PR 到 Flathub 上架）
 on:
@@ -69,12 +69,12 @@ jobs:
         # 沙盒联网在 manifest 的 NETON 模块 build-options.build-args 加 --share=network
         # （flatpak-builder CLI 无此选项；build-args 透传给底层 flatpak build），
         # cargo 拉 crates.io 必须联网；npm 已走离线缓存不依赖网络
-        run: flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/space.osbt.NETON.yml
+        run: flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/space.osbt.neton.yml
 
       - name: 导出 bundle
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          flatpak build-bundle repo "NETON-$VERSION.flatpak" space.osbt.NETON
+          flatpak build-bundle repo "NETON-$VERSION.flatpak" space.osbt.neton
 
       - uses: actions/upload-artifact@v4
         with:
