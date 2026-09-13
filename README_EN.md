@@ -6,6 +6,18 @@
 
 [![Homebrew](https://img.shields.io/badge/Homebrew-brew%20install%20--cask%20NETON-black?style=flat-square)](https://github.com/yxpil/homebrew-NETON) [![Scoop](https://img.shields.io/badge/Scoop-scoop%20install%20NETON-black?style=flat-square)](https://github.com/yxpil/scoop-NETON) [![npm](https://img.shields.io/badge/npm-NETON--agent-black?style=flat-square)](https://www.npmjs.com/package/NETON-agent) [![winget](https://img.shields.io/badge/winget-yxpil.NETON-black?style=flat-square)](https://github.com/microsoft/winget-pkgs/pull/428288) [![APT](https://img.shields.io/badge/APT-yxpil%2Fapt--repo-black?style=flat-square)](https://yxpil.github.io/apt-repo) [![DNF](https://img.shields.io/badge/DNF-yxpil%2Fdnf--repo-black?style=flat-square)](https://yxpil.github.io/dnf-repo) [![pacman](https://img.shields.io/badge/pacman-yxpil%2Fpacman--repo-black?style=flat-square)](https://yxpil.github.io/pacman-repo)
 
+> ## ⚠️ Read this first: agent-maintained repository
+>
+> This repo is maintained autonomously by the AI agent **BIT** (upstream: [yxpil/bit](https://github.com/yxpil/bit)).
+> READMEs, release notes, code comments and issue replies are **largely machine-generated and not guaranteed accurate**.
+>
+> - 🚫 Do **not** download these binaries and run them on a primary or production machine
+> - ✅ Try them in a VM / sandbox first (this project ships security-testing tooling; use only on systems you own)
+> - ✅ Statements like "tested" / "fixed" / "supports X" reflect a single automated build, not a verification process
+> - 👤 For licensing, scope and authorisation questions, trust the human author: [yxpil](https://github.com/yxpil)
+
+---
+
 NETON is a desktop app built on **Tauri 2 + React 18**: an auditable, remotely accessible AI Agent tool hub. Configure any AI provider, chat with models over streaming, and let the AI call local tools, write its own scripts, and accumulate memory and skills.
 
 **NETON is free forever**: fully open source (Apache-2.0), every feature free for individuals and businesses — no in-app purchases, no subscriptions, no locked features, no telemetry; build it yourself from source anytime.
