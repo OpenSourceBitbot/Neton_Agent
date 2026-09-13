@@ -820,3 +820,57 @@ fn build_link_graph(
         nodes,
     }
 }
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数
+// ============================================================
+
+pub fn crawl_start(
+    start_url: String,
+    max_pages: u32,
+    max_depth: u32,
+    mode: String,
+    delay_ms: u64,
+    respect_robots: bool,
+) -> Result<String, String> {
+    let strategy = match mode.to_lowercase().as_str() {
+        "dfs" | "depth" => CrawlStrategy::Dfs,
+        _ => CrawlStrategy::Bfs,
+    };
+
+    let config = CrawlerConfig {
+        strategy,
+        max_depth: max_depth as usize,
+        max_pages: max_pages as usize,
+        timeout_ms: 10000,
+        delay_ms,
+        user_agent: "Mozilla/5.0 (compatible; NETON Crawler)".to_string(),
+        allowed_domains: Vec::new(),
+        blocked_domains: Vec::new(),
+        same_domain_only: true,
+        respect_robots_txt: respect_robots,
+        check_dead_links: false,
+        follow_redirects: true,
+    };
+
+    crawl_website(start_url, config)
+}
+
+pub fn crawl_extract_links(url: String, base_url: String) -> Result<String, String> {
+    let links = extract_links(&url, &base_url);
+    serde_json::to_string(&links).map_err(|e| format!("序列化失败: {}", e))
+}
+
+pub fn crawl_check_dead_links(url: String, max_pages: u32) -> Result<String, String> {
+    Err(format!(
+        "死链接检测功能需调用 crawl_website（max_pages: {}）",
+        max_pages
+    ))
+}
+
+pub fn crawl_get_sitemap(url: String, max_pages: u32) -> Result<String, String> {
+    Err(format!(
+        "网站结构地图功能需调用 crawl_website（max_pages: {}）",
+        max_pages
+    ))
+}

@@ -315,20 +315,17 @@ pub async fn enumerate_subdomains(config: SubdomainConfig) -> Result<String, Str
         config.wordlist.clone()
     };
 
-    let semaphore = tokio::sync::Semaphore::new(config.concurrency);
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
     let mut handles = Vec::new();
 
     for word in &wordlist {
-        let permit = semaphore
-            .acquire()
-            .await
-            .map_err(|e| e.to_string())?;
+        let sem = semaphore.clone();
 
         let subdomain = format!("{}.{}", word, config.domain);
         let timeout = config.timeout_ms;
 
         handles.push(tokio::spawn(async move {
-            let _permit = permit;
+            let _permit = sem.acquire().await.unwrap();
 
             // 尝试 DNS 解析
             let result = tokio::time::timeout(

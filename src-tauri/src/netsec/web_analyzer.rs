@@ -794,9 +794,9 @@ fn extract_cookies(response: &reqwest::blocking::Response) -> Vec<CookieInfo> {
             expires: cookie
                 .expires()
                 .map(|t| format!("{:?}", t)),
-            http_only: cookie.http_only().unwrap_or(false),
-            secure: cookie.secure().unwrap_or(false),
-            same_site: cookie.same_site().map(|s| format!("{:?}", s)),
+            http_only: cookie.http_only(),
+            secure: cookie.secure(),
+            same_site: None,
         });
     }
 
@@ -1541,4 +1541,101 @@ pub fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
         .filter(|l| l.protocol == "http" || l.protocol == "https")
         .map(|l| l.url)
         .collect()
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数
+// ============================================================
+
+/// URL 快速分析：提取页面链接
+pub fn extract_links_from_url(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {}", e))?;
+    let body = resp.text().unwrap_or_default();
+    let links = extract_links_from_html(&body, &url);
+
+    serde_json::to_string(&links).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// URL 快速分析：提取页面表单
+pub fn extract_forms_from_url(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {}", e))?;
+    let body = resp.text().unwrap_or_default();
+    let document = Html::parse_document(&body);
+    let forms = extract_forms(&document, &url);
+
+    serde_json::to_string(&forms).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 安全头检测
+pub fn check_security_headers(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {}", e))?;
+
+    let mut headers_map = std::collections::HashMap::new();
+    for (key, value) in resp.headers().iter() {
+        headers_map.insert(
+            key.as_str().to_string(),
+            value.to_str().unwrap_or("").to_string(),
+        );
+    }
+
+    let report = analyze_security_headers(&headers_map);
+    serde_json::to_string(&report).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 技术栈指纹识别
+pub fn detect_tech(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {}", e))?;
+
+    let mut headers_map = std::collections::HashMap::new();
+    for (key, value) in resp.headers().iter() {
+        headers_map.insert(
+            key.as_str().to_string(),
+            value.to_str().unwrap_or("").to_string(),
+        );
+    }
+
+    let body = resp.text().unwrap_or_default();
+
+    let document = Html::parse_document(&body);
+    let fingerprint = detect_tech_fingerprint(&document, &headers_map, &body);
+    serde_json::to_string(&fingerprint).map_err(|e| format!("序列化失败: {}", e))
+}
+
+/// 敏感信息检测
+pub fn find_sensitive(url: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(&url).send().map_err(|e| format!("请求失败: {}", e))?;
+    let body = resp.text().unwrap_or_default();
+
+    let sensitive = detect_sensitive_info(&body);
+    serde_json::to_string(&sensitive).map_err(|e| format!("序列化失败: {}", e))
 }

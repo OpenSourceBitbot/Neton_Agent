@@ -93,7 +93,7 @@ pub fn get_weak_password_dictionary() -> HashSet<&'static str> {
 pub fn is_common_password(password: &str) -> bool {
     let dict = get_weak_password_dictionary();
     dict.contains(password)
-        || dict.contains(&password.to_lowercase())
+        || dict.contains(password.to_lowercase().as_str())
 }
 
 /// 检测是否有重复字符模式

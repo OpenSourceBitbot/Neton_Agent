@@ -271,7 +271,7 @@ pub async fn ping(target: String, count: u32, timeout_ms: u64) -> Result<String,
     let mut success_count = 0;
     let mut total_time = 0.0;
     let mut min_time = f64::MAX;
-    let mut max_time = 0.0;
+    let mut max_time = 0.0f64;
 
     // 使用 TCP 连接到常见端口作为存活检测（概念性替代 ping）
     for i in 0..count {

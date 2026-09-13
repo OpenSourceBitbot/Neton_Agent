@@ -290,7 +290,7 @@ pub async fn search_cve(config: CveSearchConfig) -> Result<String, String> {
 
     // 仅显示近期漏洞
     if config.recent_only {
-        all_cves.retain(|c| c.published_date >= "2023-01-01");
+        all_cves.retain(|c| c.published_date.as_str() >= "2023-01-01");
     }
 
     let total = all_cves.len() as u32;

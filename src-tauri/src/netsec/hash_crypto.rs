@@ -651,6 +651,12 @@ fn decode_octal(input: &str) -> Result<String, String> {
 
 // ---- 哈希算法实现 ----
 
+fn hex_encode(data: &[u8]) -> String {
+    data.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
 fn compute_md5(data: &[u8]) -> String {
     use md5::{Digest, Md5};
     let mut hasher = Md5::new();
@@ -845,4 +851,175 @@ fn compute_ntlm(data: &[u8]) -> String {
         .collect();
     // 真实 NTLM 使用 MD4，这里用 MD5 占位
     compute_md5(&utf16le)
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数名别名 & 存根实现
+// ============================================================
+
+pub fn compute(text: String, algorithm: String) -> Result<String, String> {
+    compute_hash(text, algorithm)
+}
+
+pub fn compute_file(file_path: String, algorithm: String) -> Result<String, String> {
+    compute_file_hash(file_path, algorithm)
+}
+
+pub fn compute_all(text: String) -> Result<String, String> {
+    compute_multiple_hashes(text)
+}
+
+pub fn crack(hash: String, hash_type: String, mode: String, dict_path: String, max_length: u32) -> Result<String, String> {
+    Err(format!(
+        "哈希破解功能暂未完全实现（hash: {}, type: {}, mode: {}, dict: {}, max_len: {}）",
+        hash, hash_type, mode, dict_path, max_length
+    ))
+}
+
+pub fn identify(hash: String) -> Result<String, String> {
+    let mut candidates = Vec::new();
+    let len = hash.len();
+    if len == 32 { candidates.push("MD5"); }
+    if len == 40 { candidates.push("SHA-1"); }
+    if len == 64 { candidates.push("SHA-256"); }
+    if len == 128 { candidates.push("SHA-512"); }
+    if len == 60 && hash.starts_with("$2a$") { candidates.push("bcrypt"); }
+    if candidates.is_empty() { candidates.push("unknown"); }
+    Ok(serde_json::json!({
+        "hash": hash,
+        "possible_types": candidates,
+        "confidence": if candidates.len() == 1 && candidates[0] != "unknown" { "high" } else { "low" }
+    }).to_string())
+}
+
+pub fn encode_batch(input: String, formats_json: String) -> Result<String, String> {
+    let formats: Vec<String> = serde_json::from_str(&formats_json)
+        .unwrap_or_else(|_| vec!["base64".to_string()]);
+    let mut results = std::collections::HashMap::new();
+    for fmt in formats {
+        let result = encode_decode(input.clone(), fmt.clone(), false).unwrap_or_default();
+        results.insert(fmt, result);
+    }
+    serde_json::to_string(&results).map_err(|e| e.to_string())
+}
+
+pub fn aes_encrypt(plaintext: String, key: String, mode: String) -> Result<String, String> {
+    Err(format!("AES 加密功能暂未实现（mode: {}）", mode))
+}
+
+pub fn aes_decrypt(ciphertext: String, key: String, mode: String) -> Result<String, String> {
+    Err(format!("AES 解密功能暂未实现（mode: {}）", mode))
+}
+
+pub fn xor(text: String, key: String) -> Result<String, String> {
+    if key.is_empty() {
+        return Err("XOR 密钥不能为空".to_string());
+    }
+    let text_bytes = text.as_bytes();
+    let key_bytes = key.as_bytes();
+    let result: Vec<u8> = text_bytes
+        .iter()
+        .zip(key_bytes.iter().cycle())
+        .map(|(t, k)| t ^ k)
+        .collect();
+    Ok(hex_encode(&result))
+}
+
+pub fn random(length: u32, charset: String) -> Result<String, String> {
+    use rand::Rng;
+    let chars: Vec<char> = if charset.is_empty() {
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars().collect()
+    } else {
+        charset.chars().collect()
+    };
+    if chars.is_empty() {
+        return Err("字符集不能为空".to_string());
+    }
+    let mut rng = rand::thread_rng();
+    let result: String = (0..length)
+        .map(|_| chars[rng.gen_range(0..chars.len())])
+        .collect();
+    Ok(result)
+}
+
+pub fn uuid(version: u32) -> Result<String, String> {
+    Ok(uuid::Uuid::new_v4().to_string())
+}
+
+pub fn identify_format(file_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&file_path);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let format_type = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" => "image",
+        "mp3" | "wav" | "flac" | "aac" | "ogg" => "audio",
+        "mp4" | "avi" | "mkv" | "mov" | "webm" => "video",
+        "pdf" => "pdf",
+        "doc" | "docx" => "word",
+        "xls" | "xlsx" => "excel",
+        "ppt" | "pptx" => "powerpoint",
+        "zip" | "rar" | "7z" | "tar" | "gz" => "archive",
+        "txt" | "md" | "log" => "text",
+        "exe" | "dll" | "so" | "bin" => "binary",
+        _ => "unknown",
+    };
+    Ok(serde_json::json!({
+        "file_path": file_path,
+        "extension": ext,
+        "format_type": format_type
+    }).to_string())
+}
+
+pub fn caesar(text: String, shift: u32, decrypt: bool) -> Result<String, String> {
+    let s = if decrypt { (26 - shift % 26) as u8 } else { (shift % 26) as u8 };
+    let result: String = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                (((c as u8 - b'a' + s) % 26) + b'a') as char
+            } else if c.is_ascii_uppercase() {
+                (((c as u8 - b'A' + s) % 26) + b'A') as char
+            } else {
+                c
+            }
+        })
+        .collect();
+    Ok(result)
+}
+
+pub fn vigenere(text: String, key: String, decrypt: bool) -> Result<String, String> {
+    if key.is_empty() {
+        return Err("Vigenere 密钥不能为空".to_string());
+    }
+    let key_chars: Vec<u8> = key
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_lowercase() as u8 - b'a')
+        .collect();
+    if key_chars.is_empty() {
+        return Err("Vigenere 密钥必须包含字母".to_string());
+    }
+    let mut key_idx = 0;
+    let result: String = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                let base = if c.is_ascii_lowercase() { b'a' } else { b'A' };
+                let shift = key_chars[key_idx % key_chars.len()];
+                let shifted = if decrypt {
+                    (c as u8 - base + 26 - shift) % 26
+                } else {
+                    (c as u8 - base + shift) % 26
+                };
+                key_idx += 1;
+                (shifted + base) as char
+            } else {
+                c
+            }
+        })
+        .collect();
+    Ok(result)
 }

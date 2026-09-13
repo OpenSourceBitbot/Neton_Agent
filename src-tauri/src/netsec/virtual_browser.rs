@@ -267,7 +267,7 @@ pub async fn navigate_to(instance_id: String, url: String) -> Result<String, Str
         status_code: status,
         content_length,
         content_type,
-        final_url,
+        final_url: final_url.clone(),
         redirect_count,
         load_time_ms: start_time.elapsed().as_millis() as u64,
         cookies,

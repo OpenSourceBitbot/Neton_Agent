@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 use std::sync::Arc;
 
 /// 端口扫描模式
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanMode {
     /// TCP 全连接扫描

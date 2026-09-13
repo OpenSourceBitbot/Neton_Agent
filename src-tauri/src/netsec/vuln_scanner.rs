@@ -914,7 +914,8 @@ fn do_scan_csrf(url: &str, config: &VulnScanConfig) -> CsrfScanResult {
     let mut token_names = Vec::new();
 
     // 用 scraper 解析 HTML，查找表单中的 CSRF token
-    if let Ok(document) = scraper::Html::parse_document(&body) {
+    let document = scraper::Html::parse_document(&body);
+    {
         // 查找所有 input 隐藏字段
         let input_selector = scraper::Selector::parse("input[type=\"hidden\"]").unwrap();
         for input in document.select(&input_selector) {
@@ -1562,6 +1563,13 @@ fn do_scan_ssrf(url: &str, param: &str, config: &VulnScanConfig) -> SsrfScanResu
                     Severity::Medium
                 };
 
+                let cvss_score = if severity == Severity::Critical {
+                    9.8
+                } else {
+                    7.5
+                };
+                let is_critical = severity == Severity::Critical;
+
                 findings.push(VulnFinding {
                     vuln_type: "ssrf".to_string(),
                     name: "服务端请求伪造漏洞 (SSRF)".to_string(),
@@ -1584,15 +1592,11 @@ fn do_scan_ssrf(url: &str, param: &str, config: &VulnScanConfig) -> SsrfScanResu
                     affected_param: Some(param.to_string()),
                     method: Some(method.to_string()),
                     cve: None,
-                    cvss: if severity == Severity::Critical {
-                        Some(9.8)
-                    } else {
-                        Some(7.5)
-                    },
+                    cvss: Some(cvss_score),
                 });
 
                 // 高危发现后停止进一步测试
-                if severity == Severity::Critical {
+                if is_critical {
                     break;
                 }
             }
@@ -2106,4 +2110,41 @@ pub fn scan_clickjacking(url: String) -> Result<String, String> {
 
     let result = do_scan_clickjacking(&url, &config);
     serde_json::to_string_pretty(&result).map_err(|e| format!("序列化失败: {}", e))
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数名别名
+// ============================================================
+
+pub fn scan_all(url: String, deep: bool) -> Result<String, String> {
+    let scan_types = if deep {
+        vec![
+            "xss".to_string(),
+            "csrf".to_string(),
+            "file_include".to_string(),
+            "command_injection".to_string(),
+            "xxe".to_string(),
+            "ssrf".to_string(),
+            "open_redirect".to_string(),
+            "clickjacking".to_string(),
+        ]
+    } else {
+        vec![
+            "xss".to_string(),
+            "csrf".to_string(),
+            "clickjacking".to_string(),
+        ]
+    };
+
+    let config = VulnScanConfig {
+        target_url: url.clone(),
+        scan_types,
+        depth: if deep { 3 } else { 1 },
+        ..Default::default()
+    };
+    scan_vulnerabilities(url, config)
+}
+
+pub fn scan_cmd_injection(url: String, param: String) -> Result<String, String> {
+    scan_command_injection(url, param)
 }

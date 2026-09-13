@@ -555,7 +555,8 @@ fn error_response(message: &str) -> Result<String, String> {
 /// 通过系统命令获取（Windows: ipconfig /all，Linux: ip addr）
 pub fn list_interfaces() -> Result<String, String> {
     let interfaces = get_network_interfaces()?;
-    success_response(interfaces, &format!("成功获取 {} 个网络接口", interfaces.len()))
+    let count = interfaces.len();
+    success_response(interfaces, &format!("成功获取 {} 个网络接口", count))
 }
 
 /// 获取网络接口列表（内部实现）
@@ -1880,4 +1881,28 @@ fn mac_to_bytes(mac: &str) -> Result<[u8; 6], ()> {
         bytes[i] = u8::from_str_radix(parts[i], 16).map_err(|_| ())?;
     }
     Ok(bytes)
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数名别名
+// ============================================================
+
+pub fn get_stats() -> Result<String, String> {
+    get_capture_stats()
+}
+
+pub fn get_dns() -> Result<String, String> {
+    get_dns_queries()
+}
+
+pub fn get_http() -> Result<String, String> {
+    get_http_requests()
+}
+
+pub fn detect_arp_spoof() -> Result<String, String> {
+    detect_arp_spoofing()
+}
+
+pub fn export(format: String, path: String) -> Result<String, String> {
+    export_packets(format, path)
 }

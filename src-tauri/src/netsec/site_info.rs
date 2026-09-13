@@ -10,6 +10,7 @@ use url::Url;
 use std::collections::{HashMap, HashSet};
 use std::time::{Instant, Duration};
 use std::thread;
+use std::net::ToSocketAddrs;
 
 // ============================================================
 // 配置结构体
@@ -586,7 +587,7 @@ const COMMON_SUBDOMAINS: &[&str] = &[
 ];
 
 /// 常见敏感路径
-const SENSITIVE_PATHS: &[(&str, &str, u8)] = &[
+const SENSITIVE_PATHS: &[(&str, &str, &str)] = &[
     // 管理后台
     ("/admin", "high", "管理后台入口"),
     ("/admin/", "high", "管理后台目录"),
@@ -1217,7 +1218,7 @@ fn detect_server_fingerprint(
         let mut matched = 0;
         let mut evidence = Vec::new();
 
-        for sig in signatures {
+        for sig in *signatures {
             let sig_lower = sig.to_lowercase();
             // 检查响应头
             if headers.keys().any(|k| k.contains(&sig_lower))
@@ -1256,7 +1257,7 @@ fn detect_server_fingerprint(
         let mut matched = 0;
         let mut evidence = Vec::new();
 
-        for sig in signatures {
+        for sig in *signatures {
             let sig_lower = sig.to_lowercase();
             if headers.keys().any(|k| k.contains(&sig_lower))
                 || headers.values().any(|v| v.to_lowercase().contains(&sig_lower))
@@ -1640,7 +1641,7 @@ fn discover_subdomains(domain: &str, config: &SiteInfoConfig) -> Vec<SubdomainIn
             let mut ip_addresses = Vec::new();
 
             // 快速 DNS 解析
-            let result = std::net::ToSocketAddrs::to_socket_addrs((&subdomain[..], 0));
+            let result = (&subdomain[..], 0).to_socket_addrs();
             if let Ok(addrs) = result {
                 let addr_vec: Vec<std::net::SocketAddr> = addrs.collect();
                 if !addr_vec.is_empty() {
@@ -1958,13 +1959,12 @@ fn parse_openssl_output(output: &str, base_info: &SslCertInfo) -> SslCertInfo {
     if let Some(line) = output.lines().find(|l| l.contains("notAfter=")) {
         if let Some(idx) = line.find("notAfter=") {
             let val = line[idx + 9..].trim().to_string();
-            info.valid_to = Some(val);
-
             // 计算剩余天数
             if let Ok(days) = calculate_days_until_expiry(&val) {
                 info.days_until_expiry = Some(days);
                 info.is_expired = days < 0;
             }
+            info.valid_to = Some(val);
         }
     }
 
@@ -2564,4 +2564,225 @@ pub fn analyze_site(url: String, config: SiteInfoConfig) -> Result<String, Strin
     };
 
     serde_json::to_string(&result).map_err(|e| format!("序列化失败: {}", e))
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数
+// ============================================================
+
+pub fn site_analyze(url: String, deep: bool) -> Result<String, String> {
+    let config = SiteInfoConfig {
+        deep_scan: deep,
+        ..Default::default()
+    };
+    analyze_site(url, config)
+}
+
+fn fetch_url_basic(url: &str) -> Result<(String, std::collections::HashMap<String, String>, String), String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let resp = client.get(url).send().map_err(|e| format!("请求失败: {}", e))?;
+    let final_url = resp.url().to_string();
+
+    let mut headers_map = std::collections::HashMap::new();
+    for (key, value) in resp.headers().iter() {
+        headers_map.insert(
+            key.as_str().to_string(),
+            value.to_str().unwrap_or("").to_string(),
+        );
+    }
+
+    let body = resp.text().unwrap_or_default();
+    Ok((final_url, headers_map, body))
+}
+
+pub fn site_detect_cms(url: String) -> Result<String, String> {
+    let (_, headers, body) = fetch_url_basic(&url)?;
+    let document = Html::parse_document(&body);
+    let cookies = headers.get("set-cookie").cloned().unwrap_or_default();
+    let cms_list = detect_cms(&document, &headers, &body, &cookies);
+    serde_json::to_string(&cms_list).map_err(|e| format!("序列化失败: {}", e))
+}
+
+pub fn site_detect_server(url: String) -> Result<String, String> {
+    let (_, headers, _) = fetch_url_basic(&url)?;
+    let server = headers.get("server").cloned().unwrap_or_else(|| "未知".to_string());
+    let powered_by = headers.get("x-powered-by").cloned();
+    Ok(serde_json::json!({
+        "server": server,
+        "x_powered_by": powered_by,
+        "headers": headers
+    }).to_string())
+}
+
+pub fn site_detect_tech_stack(url: String) -> Result<String, String> {
+    let (_, headers, body) = fetch_url_basic(&url)?;
+    let document = Html::parse_document(&body);
+
+    // 简化的技术栈检测
+    let mut techs = Vec::new();
+
+    // 服务器
+    if let Some(server) = headers.get("server") {
+        techs.push(serde_json::json!({"name": server, "category": "server"}));
+    }
+
+    // 编程语言
+    if let Some(x_powered) = headers.get("x-powered-by") {
+        techs.push(serde_json::json!({"name": x_powered, "category": "language"}));
+    }
+
+    // CMS 检测
+    let cookies = headers.get("set-cookie").cloned().unwrap_or_default();
+    let cms_list = detect_cms(&document, &headers, &body, &cookies);
+    for cms in &cms_list {
+        techs.push(serde_json::json!({"name": cms.name, "category": "cms", "confidence": cms.confidence}));
+    }
+
+    // JS 库检测（简化版）
+    let body_lower = body.to_lowercase();
+    let js_libs = vec![
+        ("jQuery", "jquery"),
+        ("React", "react"),
+        ("Vue.js", "vue"),
+        ("Angular", "angular"),
+        ("Bootstrap", "bootstrap"),
+    ];
+    for (name, pattern) in js_libs {
+        if body_lower.contains(pattern) {
+            techs.push(serde_json::json!({"name": name, "category": "frontend"}));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "technologies": techs,
+        "total": techs.len()
+    }).to_string())
+}
+
+pub fn site_detect_cdn(url: String) -> Result<String, String> {
+    let (_, headers, body) = fetch_url_basic(&url)?;
+    let body_lower = body.to_lowercase();
+    let mut best_cdn: Option<String> = None;
+    let mut best_conf = 0u8;
+    let mut best_evidence = Vec::new();
+
+    for (cdn_name, signatures) in CDN_SIGNATURES {
+        let mut matched = 0;
+        let mut evidence = Vec::new();
+        for sig in *signatures {
+            let sig_lower = sig.to_lowercase();
+            if headers.keys().any(|k| k.contains(&sig_lower))
+                || headers.values().any(|v| v.to_lowercase().contains(&sig_lower))
+            {
+                matched += 1;
+                evidence.push(format!("Header 匹配: {}", sig));
+            }
+            if body_lower.contains(&sig_lower) {
+                matched += 1;
+                evidence.push(format!("Body 匹配: {}", sig));
+            }
+        }
+        let conf = std::cmp::min(matched * 25, 100) as u8;
+        if conf > best_conf {
+            best_conf = conf;
+            best_cdn = Some(cdn_name.to_string());
+            best_evidence = evidence;
+        }
+    }
+
+    Ok(serde_json::json!({
+        "cdn": best_cdn,
+        "confidence": best_conf,
+        "evidence": best_evidence
+    }).to_string())
+}
+
+pub fn site_ssl_info(url: String) -> Result<String, String> {
+    let config = SiteInfoConfig::default();
+    let info = check_ssl_cert(&url, &config);
+    serde_json::to_string(&info).map_err(|e| format!("序列化失败: {}", e))
+}
+
+pub fn site_subdomain_scan(domain: String, count: u32) -> Result<String, String> {
+    let config = SiteInfoConfig {
+        deep_scan: false,
+        subdomain_word_limit: count as usize,
+        enable_subdomain_scan: true,
+        enable_dir_scan: false,
+        enable_ssl_check: false,
+        ..Default::default()
+    };
+    let subs = discover_subdomains(&domain, &config);
+    serde_json::to_string(&subs).map_err(|e| format!("序列化失败: {}", e))
+}
+
+pub fn site_dir_scan(url: String, count: u32) -> Result<String, String> {
+    let base_url = if url.ends_with('/') { url.clone() } else { format!("{}/", url) };
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("创建客户端失败: {}", e))?;
+
+    let mut results = Vec::new();
+    let limit = count.min(SENSITIVE_PATHS.len() as u32) as usize;
+
+    for (path, risk_level, description) in SENSITIVE_PATHS.iter().take(limit) {
+        let target_url = format!("{}{}", base_url.trim_end_matches('/'), path);
+        if let Ok(response) = client.head(&target_url).send() {
+            let status = response.status().as_u16();
+            if status != 404 {
+                results.push(serde_json::json!({
+                    "path": path,
+                    "status_code": status,
+                    "risk_level": risk_level,
+                    "description": description
+                }));
+            }
+        }
+    }
+
+    serde_json::to_string(&results).map_err(|e| format!("序列化失败: {}", e))
+}
+
+pub fn site_security_score(url: String) -> Result<String, String> {
+    let (_, headers, _) = fetch_url_basic(&url)?;
+
+    let mut score = 100u8;
+    let mut risks = Vec::new();
+    let mut present_headers = Vec::new();
+    let mut missing_headers = Vec::new();
+
+    let security_headers = [
+        ("strict-transport-security", "HSTS", 15),
+        ("x-frame-options", "X-Frame-Options", 10),
+        ("x-content-type-options", "X-Content-Type-Options", 10),
+        ("content-security-policy", "Content-Security-Policy", 15),
+        ("x-xss-protection", "X-XSS-Protection", 5),
+        ("referrer-policy", "Referrer-Policy", 5),
+    ];
+
+    for (header_key, header_name, penalty) in &security_headers {
+        if headers.contains_key(*header_key) {
+            present_headers.push(header_name.to_string());
+        } else {
+            score -= penalty;
+            risks.push(format!("缺少 {}", header_name));
+            missing_headers.push(header_name.to_string());
+        }
+    }
+
+    Ok(serde_json::json!({
+        "score": score,
+        "max_score": 100,
+        "risks": risks,
+        "present_headers": present_headers,
+        "missing_headers": missing_headers,
+        "grade": if score >= 90 { "A" } else if score >= 75 { "B" } else if score >= 60 { "C" } else if score >= 40 { "D" } else { "F" }
+    }).to_string())
 }

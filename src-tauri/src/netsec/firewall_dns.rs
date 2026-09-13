@@ -1229,6 +1229,50 @@ pub fn dns_poison_detect(domain: String) -> Result<String, String> {
         .map_err(|e| format!("序列化失败: {}", e))
 }
 
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数名别名
+// ============================================================
+
+pub fn test_ports(target: String, ports: String) -> Result<String, String> {
+    test_outbound_ports(target, ports)
+}
+
+pub fn bypass_test(target: String, port: u16) -> Result<String, String> {
+    firewall_bypass_test(target, port)
+}
+
+pub fn audit(target: String) -> Result<String, String> {
+    firewall_audit(target)
+}
+
+pub fn get_servers() -> Result<String, String> {
+    get_dns_servers()
+}
+
+pub fn speed_test(domains: String) -> Result<String, String> {
+    dns_speed_test(domains)
+}
+
+pub fn leak_test() -> Result<String, String> {
+    dns_leak_test()
+}
+
+pub fn poison_detect(domain: String) -> Result<String, String> {
+    dns_poison_detect(domain)
+}
+
+pub fn email_security(domain: String) -> Result<String, String> {
+    email_security_check(domain)
+}
+
+pub fn reverse(ip: String) -> Result<String, String> {
+    reverse_dns(ip)
+}
+
+pub fn tunnel_detect(domain: String) -> Result<String, String> {
+    dns_tunnel_detect(domain)
+}
+
 /// DNSSEC 检查
 ///
 /// 检查域名是否启用 DNSSEC，验证签名有效性（框架级）。

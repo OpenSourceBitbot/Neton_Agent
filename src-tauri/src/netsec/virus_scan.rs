@@ -3,7 +3,9 @@
 //! 文件哈希查询、简单特征码匹配
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256, Sha1, Md5};
+use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use md5::{Md5, Digest as Md5Digest};
 use std::collections::HashMap;
 
 /// 扫描类型

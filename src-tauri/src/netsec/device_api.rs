@@ -1768,17 +1768,17 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
     let mut offset = 0;
 
     // version
-    let (_ver_bytes, ver_value, consumed) = parse_tlv_at_offset(msg_content, offset)?;
+    let (_ver_bytes, ver_value, consumed) = parse_tlv_at_offset(&msg_content, offset)?;
     offset += consumed;
 
     // community
-    let (_comm_bytes, comm_value, consumed) = parse_tlv_at_offset(msg_content, offset)?;
+    let (_comm_bytes, comm_value, consumed) = parse_tlv_at_offset(&msg_content, offset)?;
     let _community = String::from_utf8_lossy(&comm_value).to_string();
     offset += consumed;
 
     // PDU (context-specific, constructed)
     let pdu_tag = msg_content[offset];
-    let (pdu_content, pdu_consumed) = parse_tlv_at_offset_content(msg_content, offset)?;
+    let (pdu_content, pdu_consumed) = parse_tlv_at_offset_content(&msg_content, offset)?;
     offset += pdu_consumed;
 
     let _pdu_type = pdu_tag & 0x0F;
@@ -1787,12 +1787,12 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
     let mut pdu_offset = 0;
 
     // request-id
-    let (_req_id_bytes, _req_id_value, consumed) = parse_tlv_at_offset(pdu_content, pdu_offset)?;
+    let (_req_id_bytes, _req_id_value, consumed) = parse_tlv_at_offset(&pdu_content, pdu_offset)?;
     pdu_offset += consumed;
 
     // error-status
     let (_err_status_bytes, err_status_value, consumed) =
-        parse_tlv_at_offset(pdu_content, pdu_offset)?;
+        parse_tlv_at_offset(&pdu_content, pdu_offset)?;
     let error_status = if !err_status_value.is_empty() {
         err_status_value[0] as u32
     } else {
@@ -1805,11 +1805,11 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
     }
 
     // error-index
-    let (_err_idx_bytes, _err_idx_value, consumed) = parse_tlv_at_offset(pdu_content, pdu_offset)?;
+    let (_err_idx_bytes, _err_idx_value, consumed) = parse_tlv_at_offset(&pdu_content, pdu_offset)?;
     pdu_offset += consumed;
 
     // var-bind-list (SEQUENCE)
-    let (var_bind_list, _consumed) = parse_tlv_at_offset_content(pdu_content, pdu_offset)?;
+    let (var_bind_list, _consumed) = parse_tlv_at_offset_content(&pdu_content, pdu_offset)?;
 
     // 解析每个 varbind
     let mut var_binds = Vec::new();
@@ -1817,19 +1817,19 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
 
     while vb_offset < var_bind_list.len() {
         let (var_bind_content, vb_consumed) =
-            parse_tlv_at_offset_content(var_bind_list, vb_offset)?;
+            parse_tlv_at_offset_content(&var_bind_list, vb_offset)?;
         vb_offset += vb_consumed;
 
         // OID
-        let (_oid_bytes, oid_value, consumed) = parse_tlv_at_offset(var_bind_content, 0)?;
+        let (_oid_bytes, oid_value, consumed) = parse_tlv_at_offset(&var_bind_content, 0)?;
         let oid = decode_oid(&oid_value);
         let mut vb_content_offset = consumed;
 
         // Value
         let (value_tag, value_data, _consumed) =
-            parse_tlv_at_offset(var_bind_content, vb_content_offset)?;
+            parse_tlv_at_offset(&var_bind_content, vb_content_offset)?;
 
-        let (value_str, value_type) = decode_snmp_value(value_tag, &value_data);
+        let (value_str, value_type) = decode_snmp_value(&value_tag, &value_data);
 
         var_binds.push(SnmpVarBind {
             oid,
@@ -1923,7 +1923,7 @@ fn decode_oid(bytes: &[u8]) -> String {
         .join(".")
 }
 
-fn decode_snmp_value(tag: u8, data: &[u8]) -> (String, String) {
+fn decode_snmp_value(tag: &[u8], data: &[u8]) -> (String, String) {
     let tag_byte = if tag.is_empty() { 0 } else { tag[0] };
     match tag_byte {
         0x02 => {
@@ -3152,7 +3152,7 @@ pub fn stress_test(config: StressTestConfig) -> Result<String, String> {
         };
 
         // 计算响应时间统计
-        let mut all_times = response_times.lock().unwrap_or_default().clone();
+        let mut all_times = response_times.lock().unwrap().clone();
         all_times.sort();
 
         let (min_time, max_time, avg_time) = if !all_times.is_empty() {
@@ -3167,16 +3167,15 @@ pub fn stress_test(config: StressTestConfig) -> Result<String, String> {
         // 计算响应时间分布（P50, P90, P95, P99）
         let mut distribution = HashMap::new();
         if !all_times.is_empty() {
-            let len = all_times.len();
-            distribution.insert("p50".to_string(), percentile(&all_times, 50));
-            distribution.insert("p90".to_string(), percentile(&all_times, 90));
-            distribution.insert("p95".to_string(), percentile(&all_times, 95));
-            distribution.insert("p99".to_string(), percentile(&all_times, 99));
+            distribution.insert("p50".to_string(), percentile(&all_times, 50.0));
+            distribution.insert("p90".to_string(), percentile(&all_times, 90.0));
+            distribution.insert("p95".to_string(), percentile(&all_times, 95.0));
+            distribution.insert("p99".to_string(), percentile(&all_times, 99.0));
             distribution.insert("min".to_string(), min_time);
             distribution.insert("max".to_string(), max_time);
         }
 
-        let error_counts = error_map.lock().unwrap_or_default().clone();
+        let error_counts = error_map.lock().unwrap().clone();
 
         Ok(StressTestResult {
             total_requests: total_req,
@@ -3248,4 +3247,259 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     }
     let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
+}
+
+// ============================================================
+// 兼容层：commands_netsec.rs 中使用的函数名别名 & 参数适配
+// ============================================================
+
+pub fn http_request(
+    method: String,
+    url: String,
+    headers: String,
+    body: String,
+    body_type: String,
+    params: String,
+    timeout_ms: u32,
+) -> Result<String, String> {
+    let http_method = match method.to_uppercase().as_str() {
+        "GET" => HttpMethod::Get,
+        "POST" => HttpMethod::Post,
+        "PUT" => HttpMethod::Put,
+        "DELETE" => HttpMethod::Delete,
+        "PATCH" => HttpMethod::Patch,
+        "HEAD" => HttpMethod::Head,
+        "OPTIONS" => HttpMethod::Options,
+        _ => HttpMethod::Get,
+    };
+
+    let header_map: Vec<(String, String)> = if headers.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&headers).unwrap_or_default()
+    };
+
+    let param_map: Vec<(String, String)> = if params.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&params).unwrap_or_default()
+    };
+
+    let body_type_enum = match body_type.to_lowercase().as_str() {
+        "form" | "form_data" | "multipart" => BodyType::FormData,
+        "urlencoded" | "form_urlencoded" | "x-www-form-urlencoded" => BodyType::XWwwFormUrlencoded,
+        "json" | "xml" | "text" | "raw" => BodyType::Raw,
+        _ => BodyType::Raw,
+    };
+
+    let request = DeviceApiRequest {
+        method: http_method,
+        url,
+        headers: header_map,
+        params: param_map,
+        body_type: body_type_enum,
+        raw_body: if body.is_empty() { None } else { Some(body) },
+        raw_format: None,
+        form_data: None,
+        form_urlencoded: None,
+        timeout_ms: timeout_ms as u64,
+        proxy: None,
+    };
+
+    send_http_request(request)
+}
+
+pub fn get_templates() -> Result<String, String> {
+    get_device_templates()
+}
+
+pub fn modbus_read_simple(
+    host: String,
+    port: u16,
+    slave_id: u8,
+    function: u8,
+    address: u16,
+    count: u16,
+) -> Result<String, String> {
+    let func = match function {
+        1 => ModbusFunction::ReadCoils,
+        2 => ModbusFunction::ReadDiscreteInputs,
+        3 => ModbusFunction::ReadHoldingRegisters,
+        4 => ModbusFunction::ReadInputRegisters,
+        _ => ModbusFunction::ReadHoldingRegisters,
+    };
+
+    let config = ModbusRequest {
+        host,
+        port,
+        slave_id,
+        function: func,
+        address,
+        count,
+        timeout_ms: 5000,
+    };
+
+    modbus_read(config)
+}
+
+pub fn modbus_write_simple(
+    host: String,
+    port: u16,
+    slave_id: u8,
+    address: u16,
+    value: u16,
+) -> Result<String, String> {
+    let config = ModbusRequest {
+        host,
+        port,
+        slave_id,
+        function: ModbusFunction::WriteSingleRegister,
+        address,
+        count: 1,
+        timeout_ms: 5000,
+    };
+
+    modbus_write(config, value)
+}
+
+pub fn mqtt_publish_compat(
+    broker: String,
+    port: u16,
+    client_id: String,
+    username: String,
+    password: String,
+    topic: String,
+    payload: String,
+    qos: u8,
+) -> Result<String, String> {
+    let config = MqttConfig {
+        broker,
+        port,
+        client_id,
+        username: if username.is_empty() { None } else { Some(username) },
+        password: if password.is_empty() { None } else { Some(password) },
+        keep_alive: 60,
+        timeout_ms: 5000,
+    };
+
+    mqtt_publish(config, topic, payload, qos)
+}
+
+pub fn mqtt_subscribe_compat(
+    broker: String,
+    port: u16,
+    client_id: String,
+    username: String,
+    password: String,
+    topic: String,
+    timeout_ms: u64,
+) -> Result<String, String> {
+    let config = MqttConfig {
+        broker,
+        port,
+        client_id,
+        username: if username.is_empty() { None } else { Some(username) },
+        password: if password.is_empty() { None } else { Some(password) },
+        keep_alive: 60,
+        timeout_ms: 5000,
+    };
+
+    mqtt_subscribe(config, topic, timeout_ms)
+}
+
+pub fn snmp_get_simple(
+    host: String,
+    community: String,
+    oid: String,
+    version: String,
+) -> Result<String, String> {
+    let ver = match version.to_lowercase().as_str() {
+        "v1" | "1" => SnmpVersion::V1,
+        "v2c" | "v2" | "2c" | "2" => SnmpVersion::V2c,
+        "v3" | "3" => SnmpVersion::V3,
+        _ => SnmpVersion::V2c,
+    };
+
+    let config = SnmpRequest {
+        host,
+        port: 161,
+        community,
+        oid,
+        version: ver,
+        timeout_ms: 5000,
+        walk_max: 100,
+    };
+
+    snmp_get(config)
+}
+
+pub fn snmp_walk_simple(
+    host: String,
+    community: String,
+    oid: String,
+    version: String,
+) -> Result<String, String> {
+    let ver = match version.to_lowercase().as_str() {
+        "v1" | "1" => SnmpVersion::V1,
+        "v2c" | "v2" | "2c" | "2" => SnmpVersion::V2c,
+        "v3" | "3" => SnmpVersion::V3,
+        _ => SnmpVersion::V2c,
+    };
+
+    let config = SnmpRequest {
+        host,
+        port: 161,
+        community,
+        oid,
+        version: ver,
+        timeout_ms: 5000,
+        walk_max: 100,
+    };
+
+    snmp_walk(config)
+}
+
+pub fn stress_test_compat(
+    url: String,
+    method: String,
+    concurrent: u32,
+    duration_sec: u32,
+    headers: String,
+    body: String,
+) -> Result<String, String> {
+    let http_method = match method.to_uppercase().as_str() {
+        "GET" => HttpMethod::Get,
+        "POST" => HttpMethod::Post,
+        _ => HttpMethod::Get,
+    };
+
+    let header_map: Vec<(String, String)> = if headers.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&headers).unwrap_or_default()
+    };
+
+    let request = DeviceApiRequest {
+        method: http_method,
+        url,
+        headers: header_map,
+        params: Vec::new(),
+        body_type: BodyType::Raw,
+        raw_body: if body.is_empty() { None } else { Some(body) },
+        raw_format: None,
+        form_data: None,
+        form_urlencoded: None,
+        timeout_ms: 10000,
+        proxy: None,
+    };
+
+    let config = StressTestConfig {
+        request,
+        concurrency: concurrent as usize,
+        duration_seconds: duration_sec as u64,
+        total_requests: 0,
+        interval_ms: 0,
+    };
+
+    stress_test(config)
 }

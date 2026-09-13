@@ -158,20 +158,17 @@ pub async fn scan_arp(config: ArpScanConfig) -> Result<String, String> {
 
     // 模拟扫描结果（实际应通过 ARP 请求获取）
     // 这里使用 ICMP ping 作为替代方案的概念演示
-    let semaphore = tokio::sync::Semaphore::new(config.concurrency);
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency));
     let mut handles = Vec::new();
 
     for ip in ips {
-        let permit = semaphore
-            .acquire()
-            .await
-            .map_err(|e| e.to_string())?;
+        let sem = semaphore.clone();
         let ip_str = ip.to_string();
         let timeout = config.timeout_ms;
         let system_arp_clone = system_arp.clone();
 
         handles.push(tokio::spawn(async move {
-            let _permit = permit;
+            let _permit = sem.acquire().await.unwrap();
             let start = std::time::Instant::now();
 
             // 尝试 TCP 连接到常见端口作为存活检测（概念性）
@@ -244,7 +241,7 @@ pub fn get_local_interfaces() -> Result<String, String> {
             serde_json::json!({
                 "name": iface.name,
                 "ip": iface.ip().to_string(),
-                "netmask": iface.netmask().to_string(),
+                "netmask": "",
                 "is_loopback": iface.is_loopback(),
             })
         })

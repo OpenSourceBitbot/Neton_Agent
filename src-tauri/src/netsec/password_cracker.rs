@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use std::sync::Arc;
+use base64::Engine;
 
 /// 爆破协议类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -560,37 +560,43 @@ pub async fn vbrowser_page_source(id: String) -> Result<String, String> {
 /// 网页综合分析
 #[tauri::command]
 pub async fn web_analyze(url: String, deep: bool) -> Result<String, String> {
-    web_analyzer::analyze_webpage(url, deep).await
+    let options = crate::netsec::web_analyzer::WebAnalysisOptions {
+        detect_sensitive_info: deep,
+        detect_tech_fingerprint: deep,
+        detect_waf: deep,
+        ..Default::default()
+    };
+    web_analyzer::analyze_webpage(url, options)
 }
 
 /// 快速提取页面所有链接
 #[tauri::command]
 pub async fn web_extract_links(url: String) -> Result<String, String> {
-    web_analyzer::extract_links(url).await
+    web_analyzer::extract_links_from_url(url)
 }
 
 /// 提取页面所有表单
 #[tauri::command]
 pub async fn web_extract_forms(url: String) -> Result<String, String> {
-    web_analyzer::extract_forms(url).await
+    web_analyzer::extract_forms_from_url(url)
 }
 
 /// 安全头检测
 #[tauri::command]
 pub async fn web_check_security_headers(url: String) -> Result<String, String> {
-    web_analyzer::check_security_headers(url).await
+    web_analyzer::check_security_headers(url)
 }
 
 /// 技术栈指纹识别
 #[tauri::command]
 pub async fn web_detect_tech(url: String) -> Result<String, String> {
-    web_analyzer::detect_tech(url).await
+    web_analyzer::detect_tech(url)
 }
 
 /// 敏感信息检测
 #[tauri::command]
 pub async fn web_find_sensitive(url: String) -> Result<String, String> {
-    web_analyzer::find_sensitive(url).await
+    web_analyzer::find_sensitive(url)
 }
 
 // ---------- 爬虫工具 ----------
@@ -605,25 +611,25 @@ pub async fn crawl_start(
     delay_ms: u64,
     respect_robots: bool,
 ) -> Result<String, String> {
-    web_crawler::crawl_start(start_url, max_pages, max_depth, mode, delay_ms, respect_robots).await
+    web_crawler::crawl_start(start_url, max_pages, max_depth, mode, delay_ms, respect_robots)
 }
 
 /// 单页面链接提取
 #[tauri::command]
 pub async fn crawl_extract_links(url: String, base_url: String) -> Result<String, String> {
-    web_crawler::crawl_extract_links(url, base_url).await
+    web_crawler::crawl_extract_links(url, base_url)
 }
 
 /// 死链接检测
 #[tauri::command]
 pub async fn crawl_check_dead_links(url: String, max_pages: u32) -> Result<String, String> {
-    web_crawler::crawl_check_dead_links(url, max_pages).await
+    web_crawler::crawl_check_dead_links(url, max_pages)
 }
 
 /// 生成网站结构地图
 #[tauri::command]
 pub async fn crawl_get_sitemap(url: String, max_pages: u32) -> Result<String, String> {
-    web_crawler::crawl_get_sitemap(url, max_pages).await
+    web_crawler::crawl_get_sitemap(url, max_pages)
 }
 
 // ---------- 站点信息分析 ----------
@@ -631,55 +637,55 @@ pub async fn crawl_get_sitemap(url: String, max_pages: u32) -> Result<String, St
 /// 综合站点分析
 #[tauri::command]
 pub async fn site_analyze(url: String, deep: bool) -> Result<String, String> {
-    site_info::site_analyze(url, deep).await
+    site_info::site_analyze(url, deep)
 }
 
 /// CMS 识别
 #[tauri::command]
 pub async fn site_detect_cms(url: String) -> Result<String, String> {
-    site_info::site_detect_cms(url).await
+    site_info::site_detect_cms(url)
 }
 
 /// 服务器/中间件指纹识别
 #[tauri::command]
 pub async fn site_detect_server(url: String) -> Result<String, String> {
-    site_info::site_detect_server(url).await
+    site_info::site_detect_server(url)
 }
 
 /// 技术栈检测
 #[tauri::command]
 pub async fn site_detect_tech_stack(url: String) -> Result<String, String> {
-    site_info::site_detect_tech_stack(url).await
+    site_info::site_detect_tech_stack(url)
 }
 
 /// CDN 检测
 #[tauri::command]
 pub async fn site_detect_cdn(url: String) -> Result<String, String> {
-    site_info::site_detect_cdn(url).await
+    site_info::site_detect_cdn(url)
 }
 
 /// SSL/TLS 证书信息
 #[tauri::command]
 pub async fn site_ssl_info(url: String) -> Result<String, String> {
-    site_info::site_ssl_info(url).await
+    site_info::site_ssl_info(url)
 }
 
 /// 子域名发现
 #[tauri::command]
 pub async fn site_subdomain_scan(domain: String, count: u32) -> Result<String, String> {
-    site_info::site_subdomain_scan(domain, count).await
+    site_info::site_subdomain_scan(domain, count)
 }
 
 /// 目录/敏感路径探测
 #[tauri::command]
 pub async fn site_dir_scan(url: String, count: u32) -> Result<String, String> {
-    site_info::site_dir_scan(url, count).await
+    site_info::site_dir_scan(url, count)
 }
 
 /// 站点安全评分
 #[tauri::command]
 pub async fn site_security_score(url: String) -> Result<String, String> {
-    site_info::site_security_score(url).await
+    site_info::site_security_score(url)
 }
 
 // ---------- 设备接入接口 ----------
@@ -695,7 +701,7 @@ pub async fn device_http_request(
     params: String,
     timeout_ms: u32,
 ) -> Result<String, String> {
-    device_api::http_request(method, url, headers, body, body_type, params, timeout_ms).await
+    device_api::http_request(method, url, headers, body, body_type, params, timeout_ms)
 }
 
 /// Modbus 读取操作
@@ -708,7 +714,7 @@ pub async fn device_modbus_read(
     address: u16,
     count: u16,
 ) -> Result<String, String> {
-    device_api::modbus_read(host, port, slave_id, function, address, count).await
+    device_api::modbus_read_simple(host, port, slave_id, function, address, count)
 }
 
 /// Modbus 写单个寄存器
@@ -720,7 +726,7 @@ pub async fn device_modbus_write(
     address: u16,
     value: u16,
 ) -> Result<String, String> {
-    device_api::modbus_write(host, port, slave_id, address, value).await
+    device_api::modbus_write_simple(host, port, slave_id, address, value)
 }
 
 /// MQTT 发布消息
@@ -735,7 +741,7 @@ pub async fn device_mqtt_publish(
     payload: String,
     qos: u8,
 ) -> Result<String, String> {
-    device_api::mqtt_publish(broker, port, client_id, username, password, topic, payload, qos).await
+    device_api::mqtt_publish_compat(broker, port, client_id, username, password, topic, payload, qos)
 }
 
 /// MQTT 订阅并等待消息
@@ -749,7 +755,7 @@ pub async fn device_mqtt_subscribe(
     topic: String,
     timeout_ms: u64,
 ) -> Result<String, String> {
-    device_api::mqtt_subscribe(broker, port, client_id, username, password, topic, timeout_ms).await
+    device_api::mqtt_subscribe_compat(broker, port, client_id, username, password, topic, timeout_ms)
 }
 
 /// SNMP GET 请求
@@ -760,7 +766,7 @@ pub async fn device_snmp_get(
     oid: String,
     version: String,
 ) -> Result<String, String> {
-    device_api::snmp_get(host, community, oid, version).await
+    device_api::snmp_get_simple(host, community, oid, version)
 }
 
 /// SNMP WALK
@@ -771,7 +777,7 @@ pub async fn device_snmp_walk(
     oid: String,
     version: String,
 ) -> Result<String, String> {
-    device_api::snmp_walk(host, community, oid, version).await
+    device_api::snmp_walk_simple(host, community, oid, version)
 }
 
 /// 获取预设设备接口模板
@@ -790,238 +796,238 @@ pub async fn device_stress_test(
     headers: String,
     body: String,
 ) -> Result<String, String> {
-    device_api::stress_test(url, method, concurrent, duration_sec, headers, body).await
+    device_api::stress_test_compat(url, method, concurrent, duration_sec, headers, body)
 }
 
 // ---------- Web漏洞扫描 ----------
 
 #[tauri::command]
 pub async fn vuln_scan_all(url: String, deep: bool) -> Result<String, String> {
-    vuln_scanner::scan_all(url, deep).await
+    vuln_scanner::scan_all(url, deep)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_xss(url: String, param: String, method: String) -> Result<String, String> {
-    vuln_scanner::scan_xss(url, param, method).await
+    vuln_scanner::scan_xss(url, param, method)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_csrf(url: String) -> Result<String, String> {
-    vuln_scanner::scan_csrf(url).await
+    vuln_scanner::scan_csrf(url)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_file_include(url: String, param: String) -> Result<String, String> {
-    vuln_scanner::scan_file_include(url, param).await
+    vuln_scanner::scan_file_include(url, param)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_cmd_injection(url: String, param: String) -> Result<String, String> {
-    vuln_scanner::scan_cmd_injection(url, param).await
+    vuln_scanner::scan_cmd_injection(url, param)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_xxe(url: String) -> Result<String, String> {
-    vuln_scanner::scan_xxe(url).await
+    vuln_scanner::scan_xxe(url)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_ssrf(url: String, param: String) -> Result<String, String> {
-    vuln_scanner::scan_ssrf(url, param).await
+    vuln_scanner::scan_ssrf(url, param)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_open_redirect(url: String, param: String) -> Result<String, String> {
-    vuln_scanner::scan_open_redirect(url, param).await
+    vuln_scanner::scan_open_redirect(url, param)
 }
 
 #[tauri::command]
 pub async fn vuln_scan_clickjacking(url: String) -> Result<String, String> {
-    vuln_scanner::scan_clickjacking(url).await
+    vuln_scanner::scan_clickjacking(url)
 }
 
 // ---------- 数据包捕获分析 ----------
 
 #[tauri::command]
 pub async fn packet_list_interfaces() -> Result<String, String> {
-    packet_capture::list_interfaces().await
+    packet_capture::list_interfaces()
 }
 
 #[tauri::command]
 pub async fn packet_start_capture(interface: String, filter: String, count: u32, duration_sec: u32) -> Result<String, String> {
-    packet_capture::start_capture(interface, filter, count, duration_sec).await
+    packet_capture::start_capture(interface, filter, count, duration_sec)
 }
 
 #[tauri::command]
 pub async fn packet_stop_capture() -> Result<String, String> {
-    packet_capture::stop_capture().await
+    packet_capture::stop_capture()
 }
 
 #[tauri::command]
 pub async fn packet_get_stats() -> Result<String, String> {
-    packet_capture::get_stats().await
+    packet_capture::get_stats()
 }
 
 #[tauri::command]
 pub async fn packet_get_dns() -> Result<String, String> {
-    packet_capture::get_dns().await
+    packet_capture::get_dns()
 }
 
 #[tauri::command]
 pub async fn packet_get_http() -> Result<String, String> {
-    packet_capture::get_http().await
+    packet_capture::get_http()
 }
 
 #[tauri::command]
 pub async fn packet_get_arp_table() -> Result<String, String> {
-    packet_capture::get_arp_table().await
+    packet_capture::get_arp_table()
 }
 
 #[tauri::command]
 pub async fn packet_detect_arp_spoof() -> Result<String, String> {
-    packet_capture::detect_arp_spoof().await
+    packet_capture::detect_arp_spoof()
 }
 
 #[tauri::command]
 pub async fn packet_export(format: String, path: String) -> Result<String, String> {
-    packet_capture::export(format, path).await
+    packet_capture::export(format, path)
 }
 
 // ---------- 哈希破解与编码转换 ----------
 
 #[tauri::command]
 pub async fn hash_compute(text: String, algorithm: String) -> Result<String, String> {
-    hash_crypto::compute(text, algorithm).await
+    hash_crypto::compute(text, algorithm)
 }
 
 #[tauri::command]
 pub async fn hash_compute_file(file_path: String, algorithm: String) -> Result<String, String> {
-    hash_crypto::compute_file(file_path, algorithm).await
+    hash_crypto::compute_file(file_path, algorithm)
 }
 
 #[tauri::command]
 pub async fn hash_compute_all(text: String) -> Result<String, String> {
-    hash_crypto::compute_all(text).await
+    hash_crypto::compute_all(text)
 }
 
 #[tauri::command]
 pub async fn hash_crack(hash: String, hash_type: String, mode: String, dict_path: String, max_length: u32) -> Result<String, String> {
-    hash_crypto::crack(hash, hash_type, mode, dict_path, max_length).await
+    hash_crypto::crack(hash, hash_type, mode, dict_path, max_length)
 }
 
 #[tauri::command]
 pub async fn hash_identify(hash: String) -> Result<String, String> {
-    hash_crypto::identify(hash).await
+    hash_crypto::identify(hash)
 }
 
 #[tauri::command]
 pub async fn encode_decode(input: String, format: String, decode: bool) -> Result<String, String> {
-    hash_crypto::encode_decode(input, format, decode).await
+    hash_crypto::encode_decode(input, format, decode)
 }
 
 #[tauri::command]
 pub async fn encode_batch(input: String, formats_json: String) -> Result<String, String> {
-    hash_crypto::encode_batch(input, formats_json).await
+    hash_crypto::encode_batch(input, formats_json)
 }
 
 #[tauri::command]
 pub async fn crypto_aes_encrypt(plaintext: String, key: String, mode: String) -> Result<String, String> {
-    hash_crypto::aes_encrypt(plaintext, key, mode).await
+    hash_crypto::aes_encrypt(plaintext, key, mode)
 }
 
 #[tauri::command]
 pub async fn crypto_aes_decrypt(ciphertext: String, key: String, mode: String) -> Result<String, String> {
-    hash_crypto::aes_decrypt(ciphertext, key, mode).await
+    hash_crypto::aes_decrypt(ciphertext, key, mode)
 }
 
 #[tauri::command]
 pub async fn crypto_xor(text: String, key: String) -> Result<String, String> {
-    hash_crypto::xor(text, key).await
+    hash_crypto::xor(text, key)
 }
 
 #[tauri::command]
 pub async fn crypto_random(length: u32, charset: String) -> Result<String, String> {
-    hash_crypto::random(length, charset).await
+    hash_crypto::random(length, charset)
 }
 
 #[tauri::command]
 pub async fn crypto_uuid(version: u32) -> Result<String, String> {
-    hash_crypto::uuid(version).await
+    hash_crypto::uuid(version)
 }
 
 #[tauri::command]
 pub async fn file_identify_format(file_path: String) -> Result<String, String> {
-    hash_crypto::identify_format(file_path).await
+    hash_crypto::identify_format(file_path)
 }
 
 #[tauri::command]
 pub async fn crypto_caesar(text: String, shift: u32, decrypt: bool) -> Result<String, String> {
-    hash_crypto::caesar(text, shift, decrypt).await
+    hash_crypto::caesar(text, shift, decrypt)
 }
 
 #[tauri::command]
 pub async fn crypto_vigenere(text: String, key: String, decrypt: bool) -> Result<String, String> {
-    hash_crypto::vigenere(text, key, decrypt).await
+    hash_crypto::vigenere(text, key, decrypt)
 }
 
 // ---------- 防火墙与DNS安全 ----------
 
 #[tauri::command]
 pub async fn fw_test_ports(target: String, ports: String) -> Result<String, String> {
-    firewall_dns::test_ports(target, ports).await
+    firewall_dns::test_ports(target, ports)
 }
 
 #[tauri::command]
 pub async fn fw_test_port_range(target: String, start: u16, end: u16) -> Result<String, String> {
-    firewall_dns::test_port_range(target, start, end).await
+    firewall_dns::test_port_range(target, start, end)
 }
 
 #[tauri::command]
 pub async fn fw_bypass_test(target: String, port: u16) -> Result<String, String> {
-    firewall_dns::bypass_test(target, port).await
+    firewall_dns::bypass_test(target, port)
 }
 
 #[tauri::command]
 pub async fn fw_audit(target: String) -> Result<String, String> {
-    firewall_dns::audit(target).await
+    firewall_dns::audit(target)
 }
 
 #[tauri::command]
 pub async fn dns_get_servers() -> Result<String, String> {
-    firewall_dns::get_servers().await
+    firewall_dns::get_servers()
 }
 
 #[tauri::command]
 pub async fn dns_speed_test(domains: String) -> Result<String, String> {
-    firewall_dns::speed_test(domains).await
+    firewall_dns::speed_test(domains)
 }
 
 #[tauri::command]
 pub async fn dns_leak_test() -> Result<String, String> {
-    firewall_dns::leak_test().await
+    firewall_dns::leak_test()
 }
 
 #[tauri::command]
 pub async fn dns_poison_detect(domain: String) -> Result<String, String> {
-    firewall_dns::poison_detect(domain).await
+    firewall_dns::poison_detect(domain)
 }
 
 #[tauri::command]
 pub async fn dns_dnssec_check(domain: String) -> Result<String, String> {
-    firewall_dns::dnssec_check(domain).await
+    firewall_dns::dnssec_check(domain)
 }
 
 #[tauri::command]
 pub async fn dns_email_security(domain: String) -> Result<String, String> {
-    firewall_dns::email_security(domain).await
+    firewall_dns::email_security(domain)
 }
 
 #[tauri::command]
 pub async fn dns_reverse(ip: String) -> Result<String, String> {
-    firewall_dns::reverse(ip).await
+    firewall_dns::reverse(ip)
 }
 
 #[tauri::command]
 pub async fn dns_tunnel_detect(domain: String) -> Result<String, String> {
-    firewall_dns::tunnel_detect(domain).await
+    firewall_dns::tunnel_detect(domain)
 }
