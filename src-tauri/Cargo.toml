@@ -1,6 +1,6 @@
 [package]
 name = "neton"
-version = "0.6.19"
+version = "0.1.0"
 description = "NETON - 网络安全分析工具集"
 edition = "2021"
 
