@@ -2,7 +2,7 @@
   "name": "neton-frontend",
   "private": true,
   "description": "NETON - 网络安全分析工具集前端",
-  "version": "0.6.18",
+  "version": "0.6.19",
   "type": "module",
   "scripts": {
     "dev": "vite",

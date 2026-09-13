@@ -1652,7 +1652,11 @@ fn get_system_arp_table() -> Result<Vec<ArpEntry>, String> {
     {
         get_system_arp_linux()
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        get_system_arp_macos()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err("不支持的操作系统".to_string())
     }
@@ -1748,6 +1752,66 @@ fn get_system_arp_linux() -> Result<Vec<ArpEntry>, String> {
                     last_seen: current_timestamp(),
                 });
             }
+        }
+    }
+
+    Ok(entries)
+}
+
+#[cfg(target_os = "macos")]
+fn get_system_arp_macos() -> Result<Vec<ArpEntry>, String> {
+    let output = Command::new("arp")
+        .arg("-a")
+        .output()
+        .map_err(|e| format!("执行 arp -a 失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("arp 命令执行失败: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+
+    for line in output_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // macOS arp -a 格式: ? (192.168.1.1) at 0:11:22:33:44:55 on en0 ifscope [ethernet]
+        let ip_start = if let Some(pos) = trimmed.find('(') { pos + 1 } else { continue; };
+        let ip_end = if let Some(pos) = trimmed[ip_start..].find(')') { ip_start + pos } else { continue; };
+        let ip = trimmed[ip_start..ip_end].to_string();
+
+        let at_marker = " at ";
+        let at_pos = if let Some(pos) = trimmed.find(at_marker) { pos + at_marker.len() } else { continue; };
+        let on_marker = " on ";
+        let on_pos = if let Some(pos) = trimmed[at_pos..].find(on_marker) { at_pos + pos } else { continue; };
+        let mac_raw = trimmed[at_pos..on_pos].trim().to_string();
+        // macOS 可能输出单数字八进制，如 0:11:22:33:44:55，需要补零
+        let mac = mac_raw
+            .split(':')
+            .map(|octet| format!("{:0>2}", octet))
+            .collect::<Vec<_>>()
+            .join(":")
+            .to_uppercase();
+
+        let iface_start = on_pos + on_marker.len();
+        let iface_end = if let Some(pos) = trimmed[iface_start..].find(' ') {
+            iface_start + pos
+        } else {
+            trimmed.len()
+        };
+        let iface = trimmed[iface_start..iface_end].to_string();
+
+        if mac.len() == 17 {
+            entries.push(ArpEntry {
+                ip,
+                mac,
+                interface: iface,
+                is_static: false,
+                last_seen: current_timestamp(),
+            });
         }
     }
 
