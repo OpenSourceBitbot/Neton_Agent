@@ -569,7 +569,11 @@ fn get_network_interfaces() -> Result<Vec<NetworkInterface>, String> {
     {
         get_interfaces_linux()
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        get_interfaces_macos()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err("不支持的操作系统".to_string())
     }
@@ -757,6 +761,127 @@ fn parse_ip_addr(output: &str) -> Result<Vec<NetworkInterface>, String> {
                         iface.mtu = Some(mtu);
                     }
                 }
+            }
+        }
+    }
+
+    if let Some(iface) = current.take() {
+        interfaces.push(iface);
+    }
+
+    Ok(interfaces)
+}
+
+#[cfg(target_os = "macos")]
+fn get_interfaces_macos() -> Result<Vec<NetworkInterface>, String> {
+    let output = Command::new("ifconfig")
+        .output()
+        .map_err(|e| format!("执行 ifconfig 失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!("ifconfig 执行失败: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    parse_ifconfig_macos(&output_str)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_ifconfig_macos(output: &str) -> Result<Vec<NetworkInterface>, String> {
+    let mut interfaces: Vec<NetworkInterface> = Vec::new();
+    let mut current: Option<NetworkInterface> = None;
+
+    for line in output.lines() {
+        // 接口行：en0: flags=...  （不以空格开头，包含冒号）
+        if !line.starts_with('\t') && !line.starts_with(' ') && line.contains(':') {
+            if let Some(iface) = current.take() {
+                interfaces.push(iface);
+            }
+
+            let name = line.split(':').next().unwrap_or("").trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+
+            let flags = line
+                .find("flags=")
+                .and_then(|i| line[i..].split_whitespace().next())
+                .unwrap_or("");
+
+            let status = if flags.contains("UP") && flags.contains("RUNNING") {
+                "up".to_string()
+            } else {
+                "down".to_string()
+            };
+
+            let iface_type = if name.starts_with("lo") {
+                "loopback".to_string()
+            } else if name.starts_with("en") {
+                "ethernet".to_string()
+            } else if name.starts_with("wl") || name.starts_with("airport") {
+                "wireless".to_string()
+            } else if name.starts_with("utun") || name.starts_with("ipsec") || name.starts_with("gif") || name.starts_with("stf") {
+                "tunnel".to_string()
+            } else if name.starts_with("bridge") || name.starts_with("vlan") {
+                "virtual".to_string()
+            } else {
+                "unknown".to_string()
+            };
+
+            // 从 flags 行提取 MTU
+            let mut mtu = None;
+            if let Some(mtu_pos) = line.find("mtu ") {
+                let mtu_str: String = line[mtu_pos + 4..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                mtu = mtu_str.parse::<u32>().ok();
+            }
+
+            current = Some(NetworkInterface {
+                name,
+                description: None,
+                ip_addresses: Vec::new(),
+                mac_address: None,
+                status,
+                interface_type: iface_type,
+                mtu,
+            });
+        } else if let Some(ref mut iface) = current {
+            let trimmed = line.trim();
+            // MAC 地址：ether 00:11:22:33:44:55
+            if trimmed.starts_with("ether ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let mac = parts[1].to_uppercase();
+                    if mac.len() == 17 {
+                        iface.mac_address = Some(mac);
+                    }
+                }
+            }
+            // IPv4：inet 192.168.1.100 netmask ...
+            else if trimmed.starts_with("inet ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    iface.ip_addresses.push(parts[1].to_string());
+                }
+            }
+            // IPv6：inet6 fe80::...
+            else if trimmed.starts_with("inet6 ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let addr = parts[1].split('%').next().unwrap_or(parts[1]).to_string();
+                    iface.ip_addresses.push(addr);
+                }
+            }
+            // 状态：status: active/inactive
+            else if trimmed.starts_with("status: ") {
+                let status = trimmed.trim_start_matches("status: ").trim();
+                iface.status = if status == "active" {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                };
             }
         }
     }

@@ -58,7 +58,6 @@ mod tray;
 mod tui;
 mod update;
 
-use std::io::Write;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::webview::Color;

@@ -413,7 +413,7 @@ fn ver_tuple(v: &str) -> (u64, u64, u64) {
     )
 }
 
-pub fn apply_update(ctx: &Arc<Ctx>, respawn: bool) -> Result<String, String> {
+pub fn apply_update(ctx: &Arc<Ctx>, _respawn: bool) -> Result<String, String> {
     let st = read_state(ctx).ok_or("没有已下载的更新")?;
     let state = st["state"].as_str().unwrap_or("");
     if state != "downloaded" {

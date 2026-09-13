@@ -861,14 +861,14 @@ pub fn crawl_extract_links(url: String, base_url: String) -> Result<String, Stri
     serde_json::to_string(&links).map_err(|e| format!("序列化失败: {}", e))
 }
 
-pub fn crawl_check_dead_links(url: String, max_pages: u32) -> Result<String, String> {
+pub fn crawl_check_dead_links(_url: String, max_pages: u32) -> Result<String, String> {
     Err(format!(
         "死链接检测功能需调用 crawl_website（max_pages: {}）",
         max_pages
     ))
 }
 
-pub fn crawl_get_sitemap(url: String, max_pages: u32) -> Result<String, String> {
+pub fn crawl_get_sitemap(_url: String, max_pages: u32) -> Result<String, String> {
     Err(format!(
         "网站结构地图功能需调用 crawl_website（max_pages: {}）",
         max_pages

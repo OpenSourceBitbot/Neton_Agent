@@ -1186,7 +1186,7 @@ pub fn mqtt_publish(
         // 发送 DISCONNECT
         let _ = stream.write_all(&[0xE0, 0x00]);
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let _elapsed = start.elapsed().as_millis() as u64;
 
         Ok(MqttMessage {
             topic,
@@ -1768,7 +1768,7 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
     let mut offset = 0;
 
     // version
-    let (_ver_bytes, ver_value, consumed) = parse_tlv_at_offset(&msg_content, offset)?;
+    let (_ver_bytes, _ver_value, consumed) = parse_tlv_at_offset(&msg_content, offset)?;
     offset += consumed;
 
     // community
@@ -1823,7 +1823,7 @@ fn parse_snmp_response(data: &[u8]) -> Result<Vec<SnmpVarBind>, String> {
         // OID
         let (_oid_bytes, oid_value, consumed) = parse_tlv_at_offset(&var_bind_content, 0)?;
         let oid = decode_oid(&oid_value);
-        let mut vb_content_offset = consumed;
+        let vb_content_offset = consumed;
 
         // Value
         let (value_tag, value_data, _consumed) =
@@ -2015,7 +2015,7 @@ pub fn ssh_execute(config: SshCommandConfig) -> Result<String, String> {
     let result = (|| -> Result<CommandResult, String> {
         // 使用 sshpass + ssh 或者直接尝试 ssh
         // 由于没有 ssh2 库依赖，这里使用基础 TCP 连接测试 + 提示
-        use std::io::{Read, Write};
+        use std::io::Read;
         use std::net::TcpStream;
 
         let addr = format!("{}:{}", config.host, config.port);
@@ -2114,7 +2114,7 @@ pub fn telnet_execute(config: TelnetConfig) -> Result<String, String> {
         }
 
         // 处理 IAC 协商（简单回应 WONT/DO/DONT）
-        let negotiated = handle_telnet_negotiation(&initial_data, &mut stream);
+        let _negotiated = handle_telnet_negotiation(&initial_data, &mut stream);
 
         // 登录（如果有用户名密码）
         let mut output = String::new();

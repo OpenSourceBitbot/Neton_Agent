@@ -121,7 +121,7 @@ fn run_compiled(
     code: &str,
     params: &serde_json::Value,
     timeout: Duration,
-    home: &std::path::Path,
+    _home: &std::path::Path,
 ) -> Result<serde_json::Value, String> {
     let work = std::env::temp_dir().join(format!("NETON_build_{}", uuid::Uuid::new_v4().simple()));
     std::fs::create_dir_all(&work).map_err(|e| format!("Failed to create temp dir: {e}"))?;
@@ -223,7 +223,7 @@ fn run_exec(
     code: &str,
     params: &serde_json::Value,
     timeout: Duration,
-    home: &std::path::Path,
+    _home: &std::path::Path,
 ) -> Result<serde_json::Value, String> {
     let mut cmd = Command::new(&rt.path);
     for a in &rt.run_args {

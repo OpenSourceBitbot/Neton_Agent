@@ -720,7 +720,7 @@ pub async fn chat_turn(
     user_input: &str,
     images: Vec<String>,
 ) -> Result<Vec<ChatMessage>, String> {
-    use tauri::Emitter;
+    
     // 0) 同会话回合互斥：先抢锁后写历史，被拒绝的并发请求不落任何消息
     let target = if session_id.is_empty() {
         ctx.sessions.lock().unwrap().active.clone()
@@ -1127,7 +1127,7 @@ pub async fn chat_turn_stream(
     event_name: &str,
     images: Vec<String>,
 ) -> Result<Vec<ChatMessage>, String> {
-    use tauri::Emitter;
+    
     let app = ctx.app.clone();
     let ev = event_name.to_string();
     let emit = move |payload: serde_json::Value| {

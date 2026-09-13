@@ -903,11 +903,11 @@ pub fn encode_batch(input: String, formats_json: String) -> Result<String, Strin
     serde_json::to_string(&results).map_err(|e| e.to_string())
 }
 
-pub fn aes_encrypt(plaintext: String, key: String, mode: String) -> Result<String, String> {
+pub fn aes_encrypt(_plaintext: String, _key: String, mode: String) -> Result<String, String> {
     Err(format!("AES 加密功能暂未实现（mode: {}）", mode))
 }
 
-pub fn aes_decrypt(ciphertext: String, key: String, mode: String) -> Result<String, String> {
+pub fn aes_decrypt(_ciphertext: String, _key: String, mode: String) -> Result<String, String> {
     Err(format!("AES 解密功能暂未实现（mode: {}）", mode))
 }
 
@@ -942,7 +942,7 @@ pub fn random(length: u32, charset: String) -> Result<String, String> {
     Ok(result)
 }
 
-pub fn uuid(version: u32) -> Result<String, String> {
+pub fn uuid(_version: u32) -> Result<String, String> {
     Ok(uuid::Uuid::new_v4().to_string())
 }
 

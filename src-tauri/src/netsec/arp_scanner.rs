@@ -134,7 +134,7 @@ fn parse_cidr(cidr: &str) -> Result<Vec<Ipv4Addr>, String> {
 
 /// 获取本机 ARP 表（概念性实现，实际需要 pnet 或系统命令）
 fn get_system_arp_table() -> HashMap<String, String> {
-    let mut arp_table = HashMap::new();
+    let arp_table = HashMap::new();
     // 实际实现中应读取系统 ARP 表
     // Windows: arp -a
     // Linux: cat /proc/net/arp

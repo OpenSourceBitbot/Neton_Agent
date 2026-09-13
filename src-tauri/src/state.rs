@@ -335,7 +335,7 @@ impl Ctx {
         );
         drop(tools);
         // 热加载：通知前端工具清单已变化（AI 注册/更新/删除/启停工具后页面即时刷新）
-        use tauri::Emitter;
+        
         let _ = crate::worker::emit_ui(&self.app, "tools-updated", serde_json::json!({}));
         // worker 模式下宿主保存工具后同步通知 worker 重读磁盘
         crate::worker::notify_reload();

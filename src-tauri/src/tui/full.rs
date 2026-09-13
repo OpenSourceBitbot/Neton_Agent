@@ -78,7 +78,7 @@ pub fn run(ctx: Arc<Ctx>, app: tauri::AppHandle) -> ! {
     let mut term = match TerminalGuard::enter() {
         Ok(t) => t,
         // raw mode 进不去（某些奇葩终端）：回退行协议，保证可用
-        Err(_) => return super::plain::run(ctx, app),
+        Err(_) => super::plain::run(ctx, app),
     };
 
     let (key_tx, mut key_rx) = tokio::sync::mpsc::unbounded_channel::<crossterm::event::KeyEvent>();

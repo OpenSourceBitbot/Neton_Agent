@@ -62,6 +62,7 @@ pub const NETONSIGN_TS_WINDOW: i64 = 120;
 /// 设备凭证派生主盐（与二维码加密 CRYPT_MASTER 同级：内置二进制，防普通逆向直读）
 pub const FP_MASTER: &str = "NETON-dev-v1-master:7c1f4e2a9b3d5806f4a2c1e7d0b6395a:8e12";
 
+#[allow(non_snake_case)]
 pub fn NETONsign(client_key: &str, device_material: &str, rid: &str, ts: i64, nonce: &str, method: &str, path: &str) -> String {
     let canonical = format!("{NETONSIGN_ALG}\n{rid}\n{ts}\n{nonce}\n{method}\n{path}\n{device_material}");
     let mac = hmac_sha256(client_key.as_bytes(), canonical.as_bytes());
@@ -81,6 +82,7 @@ pub struct NETONsignCheck {
 
 /// 验签（path 为本机请求路径，不含查询串——与手机端签名口径一致；now 为当前 unix 秒）。
 /// device_material 为本机设备凭证签名材料（device.rs::sig_material）；Err 为英文原因
+#[allow(non_snake_case)]
 pub fn NETONsign_verify(
     client_key: &str,
     device_material: &str,
@@ -127,6 +129,7 @@ pub fn NETONsign_verify(
 pub const CRYPT_MASTER: &str = "NETON-enc-v1-master:9f4c2a77e1b3d806a5c4f21e7d0b6a39:7d31";
 pub const CRYPT_PREFIX: &str = "NETON1:";
 
+#[allow(non_snake_case)]
 pub fn NETONcrypt_encrypt(plaintext: &str) -> String {
     use base64::Engine;
     use rand::Rng;

@@ -434,7 +434,7 @@ const OPEN_REDIRECT_PAYLOADS: &[&str] = &[
 
 /// 构建 HTTP 客户端
 fn build_client(timeout_ms: u64, user_agent: &str) -> Result<reqwest::blocking::Client, String> {
-    let mut builder = reqwest::blocking::Client::builder()
+    let builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
         .user_agent(user_agent)
         .redirect(reqwest::redirect::Policy::none())
@@ -1125,7 +1125,7 @@ fn do_scan_file_include(
 
         if let Ok((status, body, _, _)) = result {
             let body_lower = body.to_lowercase();
-            let baseline_lower = baseline_body.to_lowercase();
+            let _baseline_lower = baseline_body.to_lowercase();
 
             // LFI 特征: /etc/passwd 内容、win.ini 内容、PHP 源码 base64
             let is_lfi = (body.contains("root:")

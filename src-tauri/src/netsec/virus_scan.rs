@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sha1::Sha1;
-use md5::{Md5, Digest as Md5Digest};
+use md5::Md5;
 use std::collections::HashMap;
 
 /// 扫描类型

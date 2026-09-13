@@ -144,7 +144,7 @@ fn ps_bare_ampersand(cmd: &str) -> bool {
 }
 
 fn emit(ctx: &Arc<crate::state::Ctx>, phase: &str, job: &ShellJob, extra: Option<serde_json::Value>) {
-    use tauri::Emitter;
+    
     let mut payload = json!({
         "phase": phase,
         "job_id": job.id,
@@ -460,7 +460,7 @@ pub fn notify_session_result(
 /// 后台命令结束 → 唤回所属会话的 AI：
 /// 会话空闲则自动开一个新回合处理结果；会话忙则先把结果注入历史，等下一次上下文自然读到。
 async fn resume(ctx: &Arc<crate::state::Ctx>, msg: &JobDone) {
-    use tauri::Emitter;
+    
     let sid = &msg.session;
     if crate::agent::interrupted(ctx, sid) {
         return; // 会话已被中断，不自动续跑
@@ -538,7 +538,7 @@ pub fn init(ctx: &Arc<crate::state::Ctx>) {
 
 /// 把后台任务结果作为一条 role=user 的系统说明消息注入会话历史（前端会特殊渲染 [后台任务] 前缀）
 fn push_system_user(ctx: &Arc<crate::state::Ctx>, sid: &str, body: &str) {
-    use tauri::Emitter;
+    
     {
         let mut store = ctx.sessions.lock().unwrap();
         if let Some(sess) = store.get_mut(sid) {

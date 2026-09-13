@@ -7,7 +7,7 @@ use crate::netsec::arp_scanner::{ArpScanConfig, self};
 use crate::netsec::captcha::{CaptchaConfig, CaptchaType, self};
 use crate::netsec::cve_search::{CveSearchConfig, self};
 use crate::netsec::domain_analysis::{DnsRecordType, SubdomainConfig, self};
-use crate::netsec::nat_analysis::{NatDetectionConfig, self};
+use crate::netsec::nat_analysis::{self};
 use crate::netsec::password_cracker::{CrackProtocol, PasswordCrackConfig, self};
 use crate::netsec::port_scanner::{PortScanConfig, ScanMode, self};
 use crate::netsec::sql_injection::{InjectionType, SqlInjectionConfig, self};

@@ -693,7 +693,7 @@ fn emit_subagent(
     depth: usize,
     extra: Option<serde_json::Value>,
 ) {
-    use tauri::Emitter;
+    
     let mut payload = serde_json::json!({
         "phase": phase,
         "session_id": sid,
@@ -1391,7 +1391,7 @@ async fn builtin_invoke(
             let spawn_extra = Some(serde_json::json!({ "task": task_preview }));
             emit_subagent(ctx, "spawn", &sid, parent.as_deref(), &title, depth, spawn_extra.clone());
             {
-                use tauri::Emitter;
+                
                 let _ = crate::worker::emit_ui(&ctx.app, "sessions-updated", serde_json::json!(sid));
             }
             emit_subagent(ctx, "start", &sid, parent.as_deref(), &title, depth, spawn_extra);
@@ -1486,7 +1486,7 @@ async fn builtin_invoke(
                 Some(extra),
             );
             {
-                use tauri::Emitter;
+                
                 let _ = crate::worker::emit_ui(&ctx.app, "sessions-updated", serde_json::json!(sid));
             }
             unregister_sub_session(&sid);
@@ -1559,7 +1559,7 @@ async fn builtin_invoke(
             };
             if dropped > 0 {
                 crate::session::persist(ctx);
-                use tauri::Emitter;
+                
                 let _ = crate::worker::emit_ui(&ctx.app, "sessions-updated", serde_json::json!(sid));
             }
             Ok(serde_json::json!({ "truncated": true, "dropped": dropped, "kept": kept }))
@@ -1593,7 +1593,7 @@ async fn builtin_invoke(
                 (dropped, keep_tail + 1)
             };
             crate::session::persist(ctx);
-            use tauri::Emitter;
+            
             let _ = crate::worker::emit_ui(&ctx.app, "sessions-updated", serde_json::json!(sid));
             Ok(serde_json::json!({ "compacted": true, "dropped": dropped, "kept": kept }))
         }
