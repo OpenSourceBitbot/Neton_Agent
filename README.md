@@ -1,251 +1,219 @@
-# Brean In Terminal — Agent Tool Hub
+# NETON — 网络安全分析工具集
 
-简体中文 | [English](README_EN.md)
+> 开源 BIT 的网络安全分支 · AI 驱动的家庭/小型网络安全工具箱
 
-[![Release](https://img.shields.io/github/v/release/yxpil/NETON?style=flat-square&label=%E7%89%88%E6%9C%AC)](https://github.com/yxpil/NETON/releases/latest) [![下载](https://img.shields.io/github/downloads/yxpil/NETON/total?style=flat-square&label=%E4%B8%8B%E8%BD%BD)](https://github.com/yxpil/NETON/releases) [![License](https://img.shields.io/github/license/yxpil/NETON?style=flat-square)](https://github.com/yxpil/NETON/blob/main/LICENSE) [![CI](https://img.shields.io/github/actions/workflow/status/yxpil/NETON/release.yml?style=flat-square&branch=main&label=CI)](https://github.com/yxpil/NETON/actions) [![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20%E9%BE%99%E8%8A%AF%20%C2%B7%20RISC--V-black?style=flat-square)](https://osbt.space) [![官网](https://img.shields.io/website?up_message=osbt.space&down_message=%E7%A6%BB%E7%BA%BF&style=flat-square&url=https%3A%2F%2Fosbt.space)](https://osbt.space) [![QQ群](https://img.shields.io/badge/QQ%E7%BE%A4-%E7%82%B9%E5%87%BB%E5%8A%A0%E5%85%A5-black?style=flat-square)](https://qm.qq.com/q/qlFr8ct0ps)
+[![Release](https://img.shields.io/github/v/release/yxpil/NETON?style=flat-square&label=版本)](https://github.com/yxpil/NETON/releases/latest)
+[![License](https://img.shields.io/github/license/yxpil/NETON?style=flat-square)](https://github.com/yxpil/NETON/blob/main/LICENSE)
+[![平台](https://img.shields.io/badge/平台-Windows%20·%20macOS%20·%20Linux-black?style=flat-square)](#安装使用)
+[![基于 Tauri 2](https://img.shields.io/badge/基于-Tauri%202-FFC131?style=flat-square&logo=tauri)](https://tauri.app)
 
-[![Homebrew](https://img.shields.io/badge/Homebrew-brew%20install%20--cask%20NETON-black?style=flat-square)](https://github.com/yxpil/homebrew-NETON) [![Scoop](https://img.shields.io/badge/Scoop-scoop%20install%20NETON-black?style=flat-square)](https://github.com/yxpil/scoop-NETON) [![npm](https://img.shields.io/badge/npm-NETON--agent-black?style=flat-square)](https://www.npmjs.com/package/NETON-agent) [![winget](https://img.shields.io/badge/winget-yxpil.NETON-black?style=flat-square)](https://github.com/microsoft/winget-pkgs/pull/428288) [![APT](https://img.shields.io/badge/APT-yxpil%2Fapt--repo-black?style=flat-square)](https://yxpil.github.io/apt-repo) [![DNF](https://img.shields.io/badge/DNF-yxpil%2Fdnf--repo-black?style=flat-square)](https://yxpil.github.io/dnf-repo) [![pacman](https://img.shields.io/badge/pacman-yxpil%2Fpacman--repo-black?style=flat-square)](https://yxpil.github.io/pacman-repo)
-
-NETON 是一个基于 **Tauri 2 + React 18** 的桌面应用：一个可审计、可远程访问的 AI Agent 工具中枢。你可以配置任意 AI 提供方，与模型进行流式对话，并让 AI 调用本机工具、自写脚本、沉淀记忆与技能。
+NETON 是一个基于 **Tauri 2 + React** 的桌面应用，聚焦网络安全分析与渗透测试。在 BIT 原有的 AI Agent 能力基础上，集成了 **20+ 网络安全工具**，支持 AI 对话调用安全工具进行自动化分析。从端口扫描到 Web 漏洞检测，从密码强度评估到 DNS 安全审计——NETON 把专业级安全能力装进一个轻量桌面应用，让家庭用户和小型团队也能轻松守护网络安全。
 
 **NETON 永久免费**：完全开源（Apache-2.0），所有功能对个人与商业用户永久免费——无内购、无订阅、无功能锁、无遥测，可随时自行编译。
 
-> 无边框自定义标题栏 · 深/浅色主题 · 黑白线性设计 · [QQ 交流群](https://qm.qq.com/q/qlFr8ct0ps)
+---
 
 ## 目录
 
-[功能特性](#功能特性) · [技术栈](#技术栈) · [安装使用](#安装使用) · [远程访问与 API](#远程访问与-api) · [文档](#文档) · [安全与隐私](#安全与隐私) · [开发](#开发) · [项目结构](#项目结构) · [许可](#许可)
+[功能特性](#功能特性) · [AI 工具调用](#ai-工具调用) · [技术栈](#技术栈) · [安装使用](#安装使用) · [开发](#开发) · [项目结构](#项目结构) · [安全与隐私](#安全与隐私) · [许可](#许可)
+
+---
 
 ## 功能特性
 
-**对话与 AI**
+### 🤖 AI 安全助手
 
-- **流式对话**：前后端全链路流式（SSE + Tauri Event），回复逐字展示；思考过程独立显示；助手消息 Markdown 渲染（表格、代码块等）；缓存命中率实时统计。
-- **多提供方**：OpenAI / Gemini / Claude 三种协议，可配置多家、同一时刻激活一个（互斥）；先测试上游连通性再保存；「从 API 获取」一键拉取模型列表。
-- **多模态**：支持图片输入，随消息发给多模态模型。
-- **终端模式**：终端直接输入 `NETON` 进入简约 TUI——无窗口、无单实例约束、不监听端口，适合 SSH / 无桌面环境。
+让 AI 成为你的安全分析搭档，用自然语言驱动专业安全工具。
 
-**Agent 能力**
+- **流式 AI 对话**：支持 OpenAI / Gemini / Claude 等多模型提供商，前后端全链路流式响应
+- **Function Calling**：AI 可直接调用 10+ 安全工具，无需手动操作
+- **自动化安全分析**：输入目标，AI 自动编排工具链完成扫描 → 分析 → 报告生成
+- **多模态输入**：支持图片上传，可用于验证码识别、截图分析等场景
+- **审计留痕**：所有 AI 工具调用全程记录，可回溯可审查
 
-- **工具中枢**：注册、启停、调用工具；自动探测并注册本机解释器（JS / Python 等），AI 只需写一段能通讯的脚本即可成为工具；工具热更新。
-- **AI 自建能力**：AI 可通过内置工具自写插件 / 直接执行脚本 / 把脚本沉淀为常驻工具（Rhai 沙箱受限执行）。
-- **记忆与技能**：AI 通过 `add_memory` / `skill` 工具自行总结沉淀，跨会话复用，无需手动触发。
+---
 
-**协议与集成**
+### 🔍 网络扫描与探测
 
-- **MCP 客户端**：接入任意标准 MCP 服务器（Streamable HTTP / JSON-RPC 2.0），外部工具自动并入注册表。
-- **MCP 服务器**：NETON 自身也暴露标准 MCP 端点（`POST /mcp`），Claude Desktop 等任何 MCP 客户端可直接调用 NETON 的全部启用工具。
-- **OpenAI 兼容端点**：`/v1/chat/completions` 支持流式，第三方应用可把 NETON 当本地 AI 网关使用。
+快速摸清网络拓扑与设备状况，发现潜在风险点。
 
-**可靠与治理**
+- **端口扫描**：TCP 全连接扫描 / 快速扫描模式，内置 28+ 常见服务指纹识别
+- **ARP 设备扫描**：局域网设备自动发现，MAC 地址厂商识别，设备清单一键导出
+- **网络拓扑分析**：路由追踪可视化，节点图谱展示网络路径
+- **NAT 类型分析**：基于 STUN 协议，支持 6 种 NAT 类型判定（Full Cone / Restricted / Port Restricted / Symmetric 等）
 
-- **审计日志**：所有工具调用与关键操作留痕，可在「审计」页查看。
-- **自动更新**：全平台自动检查、下载、换装（可关闭）。
-- **数据本地化**：会话、记忆、技能、配置全部保存在本机。
+---
+
+### 💻 Web 安全测试
+
+一站式 Web 应用安全检测，覆盖 OWASP Top 10 常见漏洞。
+
+- **Web 漏洞扫描**：内置 XSS / CSRF / SQLi / LFI / RFI / XXE / SSRF / 点击劫持 / 命令注入 等 9 种漏洞检测引擎
+- **SQL 注入测试**：5 种检测类型（布尔盲注 / 时间盲注 / 报错注入 / 联合查询 / 堆叠查询），多种 payload 策略
+- **网页分析**：链接提取、表单分析、安全响应头检测、技术栈指纹识别
+- **网络爬虫**：BFS / DFS 双模式爬取，死链接检测，网站结构自动梳理
+- **站点情报**：CMS 识别、服务器指纹、SSL 证书分析、综合安全评分
+
+---
+
+### 🔐 密码与加密
+
+密码安全评估与加解密工具箱，覆盖哈希、编码、加密等常用场景。
+
+- **密码爆破**：支持 SSH / FTP / HTTP Basic Auth，内置 80+ 常用字典
+- **弱口令分析**：6 级强度评估算法，100+ 万弱密码库实时比对
+- **哈希计算**：MD5 / SHA1 / SHA256 / SHA512 / SHA3 / BLAKE2 等 10+ 种算法
+- **哈希破解**：字典攻击 + 暴力破解（可配置字符集与长度范围）
+- **编码/解码**：Base64 / Hex / URL / Unicode / 凯撒密码 / 摩斯密码 / 栅栏密码 / Atbash 等 13 种
+- **对称加密**：AES（ECB/CBC/CFB/OFB/CTR）、XOR 加密解密
+- **随机数生成**：密码学安全随机数、密码生成器
+
+---
+
+### 🌐 域名与 DNS 安全
+
+全面的域名资产分析与 DNS 安全检测。
+
+- **域名分析**：DNS 记录查询（A/AAAA/CNAME/MX/TXT/NS/SOA/PTR）、WHOIS 信息查询、子域名枚举
+- **DNS 速度测试**：多 DNS 服务器响应速度对比
+- **DNS 泄露检测**：检测真实 DNS 请求是否泄露
+- **DNS 投毒检测**：比对多个 DNS 源的解析结果一致性
+- **DNSSEC 验证**：检查域名 DNSSEC 签名有效性
+- **邮件安全**：SPF / DKIM / DMARC 记录检测与安全评级
+- **DNS 隧道检测**：异常 DNS 流量特征识别
+
+---
+
+### 📡 设备接入与协议
+
+多种网络协议调试工具，覆盖 Web、IoT、工业设备。
+
+- **HTTP 请求调试**：类 Postman 体验，支持 GET/POST/PUT/DELETE 等方法、自定义 Header、Body 格式（JSON/Form/XML）
+- **Modbus TCP**：工业设备寄存器读写，适用于 PLC / 工控设备调试
+- **MQTT**：IoT 设备消息发布订阅调试，支持 QoS 0/1/2
+- **SNMP**：网络设备信息查询（OID 读取、WALK 遍历）
+- **SSH / Telnet**：远程命令执行，批量脚本执行
+- **RTSP 摄像头探测**：局域网 RTSP 摄像头发现与流地址探测
+
+---
+
+### 📊 数据包与系统
+
+底层网络数据包分析与系统安全工具。
+
+- **网络接口列表**：网卡信息、IP 地址、MAC 地址、流量统计
+- **数据包捕获分析**：实时抓包，协议分布统计，DNS / HTTP 请求提取
+- **ARP 欺骗检测**：监控局域网 ARP 响应，检测中间人攻击
+- **防火墙规则测试**：出站 / 入站端口连通性测试，防火墙策略审计
+- **病毒特征匹配**：多哈希校验 + 特征码匹配，快速检测可疑文件
+
+---
+
+### 🛡️ 其他安全工具
+
+实用安全小工具合集。
+
+- **CVE 漏洞搜索**：本地漏洞库 + NVD API 双源查询，按严重程度分级
+- **验证码识别**：支持多种常见验证码类型（数字字母 / 滑块 / 点选等）
+- **虚拟浏览器**：Headless 浏览器自动化，支持页面截图、Cookie 操作
+- **文件格式识别**：基于文件头魔数的真实格式检测，识破伪装扩展名
+
+---
+
+## AI 工具调用
+
+NETON 的核心特色在于 **AI 与安全工具的深度融合**。你不需要记住每个工具的参数，只需用自然语言描述你的需求，AI 会自动选择合适的工具并执行。
+
+**举个例子：**
+
+> **你说**：帮我扫描一下 `example.com` 这个网站有什么漏洞
+
+**AI 会自动执行：**
+1. 调用「端口扫描」→ 发现开放端口与服务
+2. 调用「站点情报」→ 识别 CMS 与服务器指纹
+3. 调用「Web 漏洞扫描」→ 检测 XSS / SQLi 等常见漏洞
+4. 调用「网页分析」→ 提取链接与表单，分析安全头
+5. 汇总结果 → 生成结构化安全报告
+
+**更多场景：**
+
+- 「帮我看看我家局域网里都有什么设备」→ ARP 设备扫描
+- 「测试一下这个密码强度怎么样」→ 弱口令分析
+- 「查一下这个域名的 DNS 记录」→ 域名分析
+- 「计算一下这个字符串的 MD5 和 SHA256」→ 哈希计算
+- 「这个 Base64 帮我解码」→ 编码/解码
+
+---
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 前端 | React 18、Vite 6、Tailwind CSS 4、react-markdown + remark-gfm |
+| 前端 | React 18、Vite 6、Tailwind CSS 4 |
 | 桌面 | Tauri 2（Rust） |
-| 后端 | reqwest（含 stream）、tokio、axum、rhai、futures-util |
+| 后端 | reqwest、tokio、scraper、trust-dns |
+| AI | 多提供商（OpenAI / Gemini / Claude 协议） |
+
+---
 
 ## 安装使用
+
+### 下载安装
 
 从 [Releases](https://github.com/yxpil/NETON/releases) 下载对应平台的安装包：
 
 | 平台 | 安装包 | 说明 |
 |---|---|---|
-| Windows x64 | `*-setup.exe`（NSIS）或 `*.msi` | 双击安装；ARM64 笔记本（骁龙 X）选 `aarch64` 版 |
-| macOS Apple Silicon | `*_aarch64.dmg` | M 系列芯片 |
+| Windows x64 | `*-setup.exe` 或 `*.msi` | 双击安装即可 |
+| macOS Apple Silicon | `*_aarch64.dmg` | M 系列芯片，拖入 Applications |
 | macOS Intel | `*_x64.dmg` | 拖入 Applications 安装 |
-| Linux x64 / ARM64 | `*.deb` / `*.AppImage` / `*.rpm` | 按发行版习惯选择 |
-| 龙芯 LoongArch64（3A5000/3A6000） | `*_loongarch64.deb` / `*_loongarch64.tar.gz` | deb 双击安装；其他发行版解压二进制 |
-| RISC-V 64（VisionFive 2 等） | `*_riscv64.deb` / `*_riscv64.tar.gz` | 同上 |
-| 飞腾 / 鲲鹏 / 麒麟 ARM | `*_arm64.deb` / `*_arm64.AppImage` / `*_arm64.rpm` | 与 Linux ARM64 通用 |
-| 兆芯 / 海光 | `*_amd64.deb` / `*_amd64.AppImage` / `*_x86_64.rpm` | 与 Linux x64 通用 |
-
-> 全部支持的芯片架构与操作系统明细（含飞腾 / 鲲鹏 / 麒麟 / UOS / ChromeOS 矩阵）见 [Wiki：芯片与操作系统支持](https://github.com/yxpil/NETON/wiki/%E8%8A%AF%E7%89%87%E4%B8%8E%E6%93%8D%E4%BD%9C%E7%B3%BB%E7%BB%9F%E6%94%AF%E6%8C%81)。
-
-### ChromeOS（Crostini）安装
-
-ChromeOS 内置 Linux 开发环境（Debian 12 容器），NETON 的 Linux 安装包可直接使用，无需专门版本：
-
-1. 设置 → 关于 ChromeOS → 开发者 → Linux 开发环境 → 启用（Intel/AMD 与 ARM 机型均支持）
-2. 在 Linux 终端安装（Intel/AMD 选 amd64，ARM 选 arm64）：
-
-```bash
-sudo apt install ./NETON_0.5.9_amd64.deb
-```
-
-依赖（libwebkit2gtk-4.1、libgtk-3、libayatana-appindicator3）会由 Debian 12 仓库自动补齐；安装后 NETON 出现在「Linux 应用」文件夹，窗口经 Wayland 显示，与原生 Linux 体验一致。
-
-
-### 包管理器安装
-
-macOS（Homebrew）：
-
-```bash
-brew tap yxpil/NETON
-brew install --cask NETON
-```
-
-Windows（Scoop）：
-
-```powershell
-scoop bucket add NETON https://github.com/yxpil/scoop-NETON
-scoop install NETON
-```
-
-npm（跨平台，自动下载对应平台应用）：
-
-```bash
-npm install -g NETON-agent
-NETON-agent   # 启动 NETON
-```
-
-Windows（winget，审核中）：`winget install yxpil.NETON`
-
-Debian / Ubuntu / UOS / 麒麟（APT 源）：
-
-```bash
-echo "deb [trusted=yes] https://yxpil.github.io/apt-repo stable main" | sudo tee /etc/apt/sources.list.d/NETON.list
-sudo apt update && sudo apt install NETON
-```
-
-Fedora / RHEL / openSUSE（dnf 源）：
-
-```bash
-sudo tee /etc/yum.repos.d/NETON.repo <<'EOF'
-[NETON]
-name=NETON
-baseurl=https://yxpil.github.io/dnf-repo
-enabled=1
-gpgcheck=0
-EOF
-sudo dnf install NETON
-```
-
-Arch / Manjaro（pacman 源）：
-
-```bash
-echo "
-[NETON]
-Server = https://yxpil.github.io/pacman-repo/\$arch
-SigLevel = Never" | sudo tee /etc/pacman.d/NETON.conf
-# 在 /etc/pacman.conf 的 [core] 前加一行：Include = /etc/pacman.d/NETON.conf
-sudo pacman -Sy NETON
-```
-
-### macOS 提示"已损坏，无法打开"？
-
-NETON 目前未购买 Apple 开发者证书（$99/年），采用 ad-hoc 签名。macOS 对**从网络下载**的应用默认拦截，新系统会直接报"已损坏"。以下任一方式即可正常使用：
-
-**方式一：移除隔离属性（最可靠，推荐）**
-
-```bash
-# 安装后执行一次即可
-xattr -cr /Applications/NETON.app
-```
-
-**方式二：系统设置放行**
-
-1. 双击 dmg 安装，首次打开若弹出警告，**先不要点"移到废纸篓"**
-2. 打开 系统设置 → 隐私与安全性 → 滚动到下方安全区 → 点击 **"仍要打开"**
-
-**方式三：右键打开（macOS 14 及更早版本）**
-
-按住 Control（或右键）点击 NETON → 选"打开" → 再点"打开"确认。
-
-> 原理：`xattr -cr` 删除文件的 quarantine 隔离标记；签名本身完整可校验，去掉隔离后 macOS 不再拦截。
-
-### Windows 首次运行提示 SmartScreen？
-
-安装包未做代码签名（EV 证书同样需付费）。SmartScreen 弹窗时点 **"更多信息" → "仍要运行"** 即可。
-
-### Linux 运行 AppImage
-
-```bash
-chmod +x NETON_0.5.9_amd64.AppImage
-./NETON_0.5.9_amd64.AppImage
-```
+| Linux x64 | `*.deb` / `*.AppImage` / `*.rpm` | 按发行版习惯选择 |
 
 ### 首次使用
 
-进入「AI 设置」→ 添加一个提供方（协议 / Base URL / API Key / 模型，可点"从 API 获取"拉取模型列表）→ 点击播放按钮激活 → 回到「对话」开始使用。
+1. 打开 NETON，进入「AI 设置」页面
+2. 添加一个 AI 提供商（协议 / Base URL / API Key / 模型）
+3. 点击激活按钮启用
+4. 回到「对话」或「安全工具」页面开始使用
 
-终端场景：安装后在任意终端输入 `NETON` 直接进入 TUI 对话。
+> 提示：安全工具可独立使用，无需配置 AI；AI 对话功能需要配置模型提供商。
 
-## 远程访问与 API
-
-「远程」页开启后，NETON 在本机监听 HTTP API（默认 `127.0.0.1:8600`，可改为 `0.0.0.0` 供局域网访问；默认关闭，开启时自动生成密钥与访问密码）。
-
-**认证**
-
-- **Client Key**（`NETON_` 前缀，自动生成）：`Authorization: Bearer <key>` 或 `?key=<key>`——用于 `/v1/*` 与 `/mcp` 端点
-- **访问密码**：`/api/*` 管理端点额外要求 `X-Access-Password` 头（OpenAI / MCP 客户端无法携带自定义头，故豁免）
-
-**端点**
-
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/v1/chat/completions` | POST | OpenAI 兼容对话（支持 SSE 流式） |
-| `/v1/models` | GET | 模型列表 |
-| `/mcp` | POST / DELETE | 标准 MCP 服务器（Streamable HTTP / JSON-RPC 2.0） |
-| `/api/*` | — | 会话 / 配置 / 审计等管理接口（需访问密码） |
-| `/api/health` | GET | 健康检查（无需认证） |
-
-```bash
-curl http://127.0.0.1:8600/v1/chat/completions \
-  -H "Authorization: Bearer $NETON_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"YOUR_MODEL","messages":[{"role":"user","content":"列出当前目录"}]}'
-```
-
-详见 Wiki：[远程访问与 API](https://github.com/yxpil/NETON/wiki/远程访问与-API) · [MCP-集成](https://github.com/yxpil/NETON/wiki/MCP-集成)
-
-## 文档
-
-完整文档在 [Wiki](https://github.com/yxpil/NETON/wiki)（中英双语，每页顶部可切换语言）：
-
-- **使用**：[安装指南](https://github.com/yxpil/NETON/wiki/安装指南) · [芯片与操作系统支持](https://github.com/yxpil/NETON/wiki/芯片与操作系统支持) · [快速上手](https://github.com/yxpil/NETON/wiki/快速上手) · [对话功能](https://github.com/yxpil/NETON/wiki/对话功能) · [TUI-终端模式](https://github.com/yxpil/NETON/wiki/TUI-终端模式) · [FAQ](https://github.com/yxpil/NETON/wiki/FAQ)
-- **进阶**：[工具系统](https://github.com/yxpil/NETON/wiki/工具系统) · [MCP-集成](https://github.com/yxpil/NETON/wiki/MCP-集成) · [记忆与技能](https://github.com/yxpil/NETON/wiki/记忆与技能) · [远程访问与 API](https://github.com/yxpil/NETON/wiki/远程访问与-API) · [自动更新](https://github.com/yxpil/NETON/wiki/自动更新) · [审计日志](https://github.com/yxpil/NETON/wiki/审计日志)
-- **参与**：[开发与构建](https://github.com/yxpil/NETON/wiki/开发与构建)
-
-English wiki: [Home-EN](https://github.com/yxpil/NETON/wiki/Home-EN) — every page has a language switcher at the top.
-
-在线站点：[osbt.space](https://osbt.space) · [文档](https://osbt.space/docs.html)
-
-## 安全与隐私
-
-- **数据本地化**：会话、记忆、技能、配置全部保存在本机应用数据目录，不上传遥测。
-- **双重认证**：Client Key（常数时间比较防时序侧信道）+ 访问密码；远程访问默认关闭。
-- **沙箱与限额**：AI 自建脚本经 Rhai 沙箱受限执行（深度 / 操作数 / 墙钟预算）；子进程工具带超时杀灭、输出上限与资源回收。
-- **MCP 会话治理**：会话 30 分钟空闲过期、数量上限、显式 DELETE 终止。
-- **签名透明**：macOS ad-hoc 签名 / Windows 无 EV 证书（均为无付费证书的取舍，见上方安装说明），源码与 CI 构建流程全部公开可查。
+---
 
 ## 开发
 
-前置：[Node.js](https://nodejs.org/)、[Rust](https://www.rust-lang.org/) 工具链、Tauri 系统依赖。
+前置要求：[Node.js](https://nodejs.org/)、[Rust](https://www.rust-lang.org/) 工具链、Tauri 系统依赖。
 
 ```bash
 npm install          # 安装前端依赖
 npm run tauri dev    # 开发模式（热更新）
-npm run tauri build  # 构建 release（NSIS / MSI / dmg / AppImage / deb）
+npm run tauri build  # 构建 release 版本
 ```
+
+---
 
 ## 项目结构
 
 ```
-src/               React 前端
-  pages/           对话 / AI 设置 / 工具 / 技能 / 记忆 / 审计 / 远程
-  components/      Markdown、工具卡片、图标等
-src-tauri/         Tauri (Rust) 后端
-  src/             ai、agent、mcp、registry、runtime、script_runtime、
-                   http_api、update、audit、session、goal、memory …
-installer/NETON.iss  Inno Setup 打包脚本
+src/                    React 前端
+  pages/               对话 / AI 设置 / 安全工具 / 主题
+  components/netsec/   21 个安全工具组件
+src-tauri/             Tauri (Rust) 后端
+  src/netsec/          16 个网络安全模块
+  src/ai.rs            AI 引擎与工具调用
+  src/registry.rs      工具注册与分发
 ```
+
+---
+
+## 安全与隐私
+
+- **数据本地化**：所有扫描数据、会话记录、配置信息全部保存在本机，无任何遥测上传
+- **工具调用审计**：每一次工具调用都有完整日志，可在审计页面回溯
+- **AI 工具审批**：可配置 AI 调用工具前需要人工确认，防止误操作
+- **沙箱执行**：部分高危操作在受限环境中运行，降低安全风险
+
+---
 
 ## 许可
 
