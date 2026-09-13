@@ -1,11 +1,12 @@
 # NETON — 网络安全分析工具集
 
-> 开源 BIT 的网络安全分支 · AI 驱动的家庭/小型网络安全工具箱
+> 🔗 **基于 [BIT](https://github.com/yxpil/bit) 二次开发** · 开源 BIT 的网络安全分支 · AI 驱动的家庭/小型网络安全工具箱
 
-[![Release](https://img.shields.io/github/v/release/yxpil/NETON?style=flat-square&label=版本)](https://github.com/yxpil/NETON/releases/latest)
-[![License](https://img.shields.io/github/license/yxpil/NETON?style=flat-square)](https://github.com/yxpil/NETON/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/OpenSourceBitbot/Neton_Agent?style=flat-square&label=版本)](https://github.com/OpenSourceBitbot/Neton_Agent/releases/latest)
+[![License](https://img.shields.io/github/license/OpenSourceBitbot/Neton_Agent?style=flat-square)](https://github.com/OpenSourceBitbot/Neton_Agent/blob/main/LICENSE)
 [![平台](https://img.shields.io/badge/平台-Windows%20·%20macOS%20·%20Linux-black?style=flat-square)](#安装使用)
 [![基于 Tauri 2](https://img.shields.io/badge/基于-Tauri%202-FFC131?style=flat-square&logo=tauri)](https://tauri.app)
+[![Forked from BIT](https://img.shields.io/badge/forked%20from-BIT-667eea?style=flat-square)](https://github.com/yxpil/bit)
 
 NETON 是一个基于 **Tauri 2 + React** 的桌面应用，聚焦网络安全分析与渗透测试。在 BIT 原有的 AI Agent 能力基础上，集成了 **20+ 网络安全工具**，支持 AI 对话调用安全工具进行自动化分析。从端口扫描到 Web 漏洞检测，从密码强度评估到 DNS 安全审计——NETON 把专业级安全能力装进一个轻量桌面应用，让家庭用户和小型团队也能轻松守护网络安全。
 
