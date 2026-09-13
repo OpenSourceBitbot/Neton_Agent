@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=NETON
+GenericName=Network Security Toolkit
+Comment=Network security analysis toolkit with port scanning, vulnerability detection, and more
+Comment[zh_CN]=网络安全分析工具集，包含端口扫描、漏洞检测等功能
+Exec=neton
+Icon=com.neton.netsec
+Terminal=false
+Categories=Development;Utility;Network;Security;
+Keywords=Network;Security;Scanner;CVE;Pentest;
+StartupWMClass=NETON

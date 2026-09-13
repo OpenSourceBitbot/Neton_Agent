@@ -1,0 +1,73 @@
+[package]
+name = "neton"
+version = "0.6.18"
+description = "NETON - 网络安全分析工具集"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api 与 tauri.conf.json 的 app.macOSPrivateApi=true 配套（官方要求）：
+# 该 feature 仅在 macOS 上产生实际效果，Windows/Linux 启用无副作用，
+# tauri-build 会合并解析 Cargo.toml 所有 target 的 features 与 conf 比对，因此统一声明。
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "protocol-asset"] }
+tauri-plugin-notification = "2"
+# 单实例保护：二次启动时唤起已有实例的主窗口而不是再开一个进程
+tauri-plugin-single-instance = "2"
+# 开机自动启动：写系统登录项（macOS LaunchAgent / Windows 注册表 Run / Linux autostart 目录）
+tauri-plugin-autostart = "2"
+# 全局快捷键：即使窗口隐藏/最小化也能用系统级热键唤出主界面
+tauri-plugin-global-shortcut = "2"
+# 守护进程：接力拉起前校验主程序二进制 sha256（防病毒换装借壳复活）
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+rhai = { version = "1", features = ["serde"] }
+futures-util = "0.3"
+# 网络安全工具集依赖
+trust-dns-resolver = "0.23"
+md-5 = "0.10"
+sha1 = "0.10"
+walkdir = "2"
+url = "2"
+percent-encoding = "2"
+# 附件解析：Excel(calamine) / Word(.docx via zip+xml) / 网页正文(scraper) / base64 解析
+# calamine/quick-xml 保持跟随上游修复版：quick-xml <0.41 有 DoS 公告（RUSTSEC-2026-0194/0195）
+calamine = "0.36"
+scraper = "0.20"
+base64 = "0.22"
+rfd = "0.15" # 原生保存对话框（图片/图表另存为）
+zip = "2"
+quick-xml = "0.42"
+# 页眉仪表盘：本进程内存占用查询
+sysinfo = "0.33"
+# 幻觉防护：中文分词（jieba 搜索粒度）检测回复中某个词异常重复
+jieba-rs = "0.7"
+# 远程二维码：网卡地址枚举（LAN IPv4 / 全球 IPv6）+ 离线二维码 SVG 生成
+if-addrs = "0.13"
+qrcode = { version = "0.14", features = ["svg"] }
+ctrlc = "3"
+# 调试追踪：无锁 channel + 后台 flush，死锁诊断专用
+crossbeam-channel = "0.5"
+# 本机操控三件套（实验性，设置页开关）：截屏 + 鼠标/键盘合成输入
+# enigo 在 Linux 依赖 libxdo（Alpine musl 无包、exotic 架构容器缺失）导致链接失败，
+# 因此做成可选 feature：musl/exotic/无 GUI 目标用 --no-default-features 编译即可跳过
+screenshots = { version = "0.8", optional = true }
+enigo = { version = "0.2", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+# 全屏 TUI（真终端时启用；管道/无 TTY 自动回退行协议，E2E 不受影响）。
+# exotic/musl 目标用 --no-default-features 跳过
+ratatui = { version = "0.28", optional = true }
+crossterm = { version = "0.28", optional = true }
+
+[features]
+default = ["desktop-ctl", "tui-ui"]
+desktop-ctl = ["dep:screenshots", "dep:enigo", "dep:image"]
+tui-ui = ["dep:ratatui", "dep:crossterm"]

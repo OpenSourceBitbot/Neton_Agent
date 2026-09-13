@@ -1,0 +1,789 @@
+// yxpil · NETON
+// release 构建隐藏 Windows 控制台窗口；debug 保留便于查看日志
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod agent;
+mod ai;
+mod audit;
+mod autopilot;
+mod commands;
+mod commands_netsec;
+mod config;
+mod crash;
+mod delegation;
+// 本机操控三件套：依赖 enigo（Linux 需要 libxdo）。musl / exotic 架构 / 无 GUI 目标
+// 用 --no-default-features 编译时替换为 stub，保证链接通过、工具返回明确错误
+#[cfg(feature = "desktop-ctl")]
+mod desktop_ctl;
+#[cfg(not(feature = "desktop-ctl"))]
+mod desktop_ctl {
+    type Ctx = std::sync::Arc<crate::state::Ctx>;
+    pub fn screenshot(_ctx: &Ctx, _d: usize, _r: Option<(u32, u32, u32, u32)>) -> Result<String, String> {
+        Err("此构建未编译本机操控能力（no-GUI/musl 目标）".into())
+    }
+    pub fn mouse(_a: &str, _p: &serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("此构建未编译本机操控能力（no-GUI/musl 目标）".into())
+    }
+    pub fn keyboard(_a: &str, _p: &serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("此构建未编译本机操控能力（no-GUI/musl 目标）".into())
+    }
+}
+mod extract;
+mod goal;
+mod guardian;
+mod http_api;
+mod mcp;
+mod memory;
+mod netinfo;
+mod netsec;
+mod engine;
+mod perms;
+mod plugins;
+mod registry;
+mod worker;
+mod relay;
+mod repetition;
+mod sandbox;
+mod shellbg;
+mod runtime;
+mod script;
+mod script_runtime;
+mod security;
+mod session;
+mod state;
+mod syntax;
+mod toolenv;
+mod trace;
+mod tray;
+mod tui;
+mod update;
+
+use std::io::Write;
+use std::sync::Arc;
+use tauri::Manager;
+use tauri::webview::Color;
+
+/// 权威退出函数：所有退出路径（托盘、quit_app 命令、信号、兜底）都走这里。
+/// 与守护进程握手 + 静默更新 + 最终 exit。不阻塞、不 panic。
+fn graceful_quit(ctx: &tauri::AppHandle, via: &str) {
+    if let Some(c) = ctx.try_state::<Arc<crate::state::Ctx>>() {
+        crate::audit::record(&c, "local-app", "app.quit", "NETON",
+            serde_json::json!({ "via": via }), true);
+        crate::guardian::expect_exit(&c);
+        let _ = crate::update::apply_update(&c, false);
+    }
+    ctx.exit(0);
+}
+
+fn main() {
+    // ================================================================================
+    // 启动总览（按执行顺序）：
+    //   [0] main() 顶部：跨平台渲染 workaround（环境变量，必须在 Builder 之前）
+    //   [1] 模式判定：guardian 守护进程 / TUI / agent worker / 桌面端 GUI（正常启动）
+    //   [2] Builder 插件注册：共用(notification/autostart) + 桌面端专属(single_instance/global_shortcut)
+    //   [3] setup 回调：worker 模式提前返回 → 桌面端正常启动链
+    //       （窗口 → 透明色 → 信号兜底 → trace/守护 → toolhomes/插件 → 托盘 →
+    //         自启同步 → HTTP 服务 → 模型上下文 → Autopilot → 自动更新）
+    //   [4] 事件循环：ExitRequested（真实退出请求）→ run
+    // 测试/调试设施（与"正常启动"区分）：
+    //   - `NETON tui` / 交互终端裸 `NETON` → TUI 模式（无窗口/无 HTTP/无单实例）
+    //   - `--data-dir <path>` → 隔离数据目录（E2E 测试/提权子进程用，不污染真实数据）
+    //   - `POST /api/debug/*` → 调试桥端点（见 http_api.rs，仅供 E2E/诊断，正式客户端勿依赖）
+    // ================================================================================
+
+    // ============ 跨平台渲染 workaround（必须在任何 GTK/WebKit/WebView2 初始化之前） ============
+
+    // Linux (WebKitGTK)：NVIDIA GPU 在 Wayland 上的 DMABUF 渲染器崩溃
+    // （Error 71 / AcceleratedSurfaceDMABuf / 白色空白窗口）。
+    // 参考 Tauri 官方 https://tauri.app/develop/debug/linux-graphics/
+    // 智能检测：只在受影响条件下 + 用户没手动设置过时自动覆盖，
+    // 避免误伤稳定系统和高级用户的自定义配置。
+    #[cfg(target_os = "linux")]
+    {
+        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+        let is_x11 = std::env::var("DISPLAY").is_ok() && !is_wayland;
+
+        if is_wayland {
+            // Wayland + NVIDIA：优先只禁用 explicit sync，保留 DMABUF 硬件加速
+            if std::env::var("__NV_DISABLE_EXPLICIT_SYNC").is_err() {
+                std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
+            }
+            // 兜底：禁用整个 DMABUF 渲染器（影响性能但最稳）
+            if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+        }
+
+        // X11 + 透明窗口：部分旧 GTK/WebKitGTK 版本需要 GDK_BACKEND=x11
+        // 才能让 transparent:true 正常工作（避免黑色/白色方块背景）。
+        if is_x11 && std::env::var("GDK_BACKEND").is_err() {
+            std::env::set_var("GDK_BACKEND", "x11");
+        }
+    }
+
+    // Windows：WebView2 透明窗口多层保险。
+    // wry 0.55+ 在窗口构建时已通过 COM API（ICoreWebView2ControllerOptions3 /
+    // ICoreWebView2Controller2）设 DefaultBackgroundColor 为全透明，Tauri 只要读到
+    // transparent:true 就会触发。但某些 WebView2 Runtime 版本或 wry 分支可能不走
+    // 这条路径，这里额外设置两个 WebView2 环境变量兜底：
+    //   - WEBVIEW2_DEFAULT_BACKGROUND_COLOR：微软官方指定的早期背景色环境变量
+    //   - WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS += --default-background-color：Chromium 命令行
+    // 都必须在 Builder 创建前设置（wry 构建窗口时读取）。
+    #[cfg(target_os = "windows")]
+    {
+        // 微软官方文档推荐：这个环境变量比 COM API 还早生效，能彻底消除启动白闪
+        if std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").is_err() {
+            std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000");
+        }
+        // Chromium 命令行参数兜底
+        let mut args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        let need_bg = !args.contains("--default-background-color");
+        if need_bg {
+            if !args.is_empty() {
+                args.push(' ');
+            }
+            args.push_str("--default-background-color=00000000");
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", args);
+        }
+    }
+
+    // ============================================================================================
+
+    // 终端模式：`NETON tui` 或交互式终端里的裸 `NETON` 进入简约 TUI（无窗口 / 无单实例 / 不监听端口，
+    // 可与桌面端同时运行，共用数据目录）。generate_context! 只能展开一次，
+    // 所以 TUI 与桌面端共用同一个 Builder，仅按模式注册不同的插件与启动逻辑。
+    // Windows 关键顺序：release 版是 GUI 子系统（无控制台），从终端启动时标准流全部无效，
+    // 必须先 attach_console 挂接父进程控制台（CONIN$→stdin），stdin 的 TTY 检测才有意义；
+    // 双击 / open 等无父控制台的启动方式 AttachConsole 自然失败，仍走桌面端。
+    // stdout 已被管道占用（E2E / CI）时 attach_console 自动跳过，标准流保持原样。
+    #[cfg(windows)]
+    attach_console();
+
+    // 守护进程模式：本进程由主进程拉起用于看门狗守护，不进入 GUI / TUI（握手文件与日志路径由参数传入）
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.len() >= 4 && argv[1] == guardian::GUARDIAN_FLAG {
+        guardian::run_guardian(argv[2].clone().into(), argv[3].clone().into());
+        return;
+    }
+
+    // --data-dir <path>：显式指定数据目录（提权重启时授权弹窗产生的子进程拿不到原环境变量，
+    // 用参数透传保证数据目录一致；也便于脚本/测试）
+    if let Some(pos) = argv.iter().position(|a| a == "--data-dir") {
+        if let Some(dir) = argv.get(pos + 1) {
+            std::env::set_var("NETON_DATA_DIR", dir);
+        }
+    }
+
+    let explicit_tui = std::env::args().any(|a| a == "tui");
+    let bare_tty_tui = !explicit_tui
+        && std::env::args().count() == 1
+        && std::env::var_os("NETON_HEADLESS").is_none()
+        && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    // agent worker 子进程模式：宿主拉起的无 UI 引擎进程（NETON_WORKER_TOKEN 由宿主注入）
+    let worker_mode = std::env::var("NETON_WORKER_TOKEN").map(|v| !v.trim().is_empty()).unwrap_or(false);
+    let tui_mode = explicit_tui || bare_tty_tui || worker_mode;
+
+    // WebView2 默认遵循系统代理，而安装版前端经 http://tauri.localhost 加载；
+    // 系统代理（如 Clash）未排除该主机时会白屏。前端资源全部本地内嵌，禁用代理无副作用。
+    // 追加而非覆盖，保留外部传入的调试参数（如 --remote-debugging-port）。
+    if !tui_mode {
+        let mut webview_args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        if !webview_args.is_empty() && !webview_args.contains("no-proxy-server") {
+            webview_args.push(' ');
+        }
+        webview_args.push_str("--no-proxy-server");
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", webview_args);
+    }
+
+    // ─── 板块 [2]：Builder 插件注册 ─────────────────────────────────────────────
+    let mut builder = tauri::Builder::default()
+        // 以下插件 TUI 与桌面端共用：autostart 开机自启、notification 系统通知
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
+    if !tui_mode {
+        // 单实例保护：仅桌面端注册（TUI 需要能与桌面端同时运行）；
+        // 二次启动时唤起已有实例的主窗口后退出新进程
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }));
+        // 全局快捷键插件：必须在 setup 调 tray::register_hotkey 之前注册——
+        // 漏注册时 app.global_shortcut() 会 panic "state() called before manage()"，
+        // 表现为桌面端启动即崩（退出码 101）+ 守护进程反复拉起 = 用户看到的"白屏/UI 消失"
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+    builder
+        .setup(move |app| {
+            // ===== agent worker 子进程模式：无 UI，只跑对话引擎 / 工具执行 / 审批 / 后台 shell =====
+            if worker_mode {
+                worker::IN_WORKER.store(true, std::sync::atomic::Ordering::Relaxed);
+                // 关键：平台 conf 的 app.windows 会被 Builder 无条件创建，
+                // worker 必须立刻销毁这个窗口——否则每次启动都会多出一个
+                // "能渲染但没有后端服务" 的假窗口（用户看到的第二个坏窗口）
+                if let Some(w) = app.get_webview_window("neton-main") {
+                    let _ = w.destroy(); // destroy 绕过 CloseRequested（否则只会 hide 驻留）
+                }
+                let ctx = state::Ctx::load(app.handle().clone());
+                crash::install(&ctx.data_dir);
+                trace::init(&ctx.data_dir);
+                // 后台 shell 续跑 worker：shell 工具在 worker 进程内执行，作业登记在本进程，
+                // DONE_TX 若不初始化，finish() 里的 JobDone 会被静默丢弃——表现为
+                // 「命令跑完 / 被停止都不向会话汇报」。worker 内 chat_auto 直接本地执行，
+                // UI 事件经 emit_ui 转发回宿主，聊天界面照常实时更新。
+                crate::shellbg::init(&ctx);
+                audit::record(&ctx, "host", "worker.start", "agent-worker", serde_json::json!({}), true);
+                let wctx = ctx.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = worker::serve(wctx.clone()).await {
+                        // 服务致命错误（绑定失败等）：退出码 3，宿主监督循环检测到后重拉
+                        audit::record(&wctx, "host", "worker.serve_error", "agent-worker", serde_json::json!({ "error": e }), false);
+                        std::process::exit(3);
+                    }
+                });
+                return Ok(());
+            }
+
+            // ─── 板块 [3b]：桌面端正常启动链（GUI 宿主）── 以下到 setup 结束按顺序执行 ───
+            // 顺序敏感：窗口先建（用户尽快看到 UI），重活全部丢后台（白屏修复的核心原则）。
+            let ctx = state::Ctx::load(app.handle().clone());
+            // 全局 panic 钩子：崩溃信息（含回溯）追加到数据目录 crash.log，诊断报告展示
+            crash::install(&ctx.data_dir);
+            let (actor, target) = if tui_mode { ("local-cli", "tui") } else { ("local-app", "NETON") };
+            audit::record(&ctx, actor, "app.start", target, serde_json::json!({}), true);
+            app.manage(ctx.clone());
+            // 后台 shell 的顶层续跑 worker：长命令自然结束时自动把结果唤回所属会话的 AI
+            crate::shellbg::init(&ctx);
+
+            // agent worker 监督：拉起独立引擎子进程并保活（仅在桌面主进程；配置可关）
+            if !tui_mode {
+                worker::boot_host(&ctx);
+            }
+
+            // 全局快捷键：唤出主界面（仅桌面端；TUI 无窗口不注册）。
+            // 启动期冲突不阻断启动：失败原因已落审计，用户改键后即恢复
+            if !tui_mode {
+                let _ = tray::register_hotkey(app.handle());
+            }
+
+            if tui_mode {
+                // TUI：无窗口、无托盘、无 HTTP 服务、无 Autopilot（与桌面端零冲突）。
+                // 工作区沙箱：Agent 默认只在启动 `NETON tui` 的当前目录下工作
+                //（config.workspace_root 显式配置时以配置为准）
+                if crate::sandbox::effective_root(&ctx).is_none() {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        *ctx.workspace_root.lock().unwrap() = Some(cwd);
+                    }
+                }
+                // 解释器探测同步执行：CLI 场景不赶时间，脚本类工具需要完整列表。
+                let _ = ctx.refresh_runtimes();
+                let tui_ctx = ctx.clone();
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // 内部 std::process::exit，不会返回
+                    tui::run_blocking(tui_ctx, handle);
+                });
+                return Ok(());
+            }
+
+            // ========== 显式创建主窗口 ==========
+            // 窗口不再放平台 conf 的 app.windows（那里会被 Builder 无条件创建，
+            // worker/TUI 也会凭空多出一个"能渲染但没有后端服务"的坏窗口）。
+            // 仅桌面宿主走到这里，worker/TUI 已在上面提前返回。
+            {
+                let mut wb = tauri::webview::WebviewWindowBuilder::new(
+                    app,
+                    "neton-main",
+                    tauri::WebviewUrl::default(),
+                )
+                .title("NETON")
+                .inner_size(1120.0, 740.0)
+                .min_inner_size(920.0, 620.0)
+                .center()
+                .transparent(true)
+                .shadow(true)
+                .visible(true);
+                // 平台差异：Windows/Linux 无边框圆角（前端自绘标题栏）；
+                // macOS 保留原生红绿灯，Overlay 让内容延伸到标题栏区域
+                #[cfg(target_os = "macos")]
+                {
+                    wb = wb
+                        .decorations(true)
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    wb = wb.decorations(false);
+                }
+                wb.build()?;
+            }
+
+            // ========== 透明窗口强制设色 ==========
+            // Rust 端直接调 set_background_color 比 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 更可靠——
+            // WebView2 的 --default-background-color 参数在某些 wry/WebView2 版本组合下不生效
+            // （见 tauri-apps/tauri#1739 / khiops/termora#98）。macOS 上 transparent: true 也只对
+            // 窗口级生效，WKWebView 自身默认白底，同样需要显式设透明。
+            // Windows 死锁修复：setup 在主线程执行时 WebView2 尚未就绪，同步调
+            // set_background_color（COM 调用）会与 WebView2 初始化互相等待，表现为启动即卡死
+            // （macOS 无此问题）。改为延迟到事件循环跑起来之后在旁路线程执行。
+            {
+                let bg_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Some(win) = bg_app.get_webview_window("neton-main") {
+                        if let Err(e) = win.set_background_color(Some(Color(0, 0, 0, 0))) {
+                            eprintln!("[NETON] set_background_color failed: {e}");
+                        }
+                    }
+                });
+            }
+
+            // ========== 桌面端：信号兜底 ==========
+            // Ctrl+C 兜底（托盘退出、quit_app、ExitRequested 都已经走 graceful_quit，
+            // 这里只兜底系统级 kill/终端 Ctrl+C 意外退出场景）
+            let handle_sig = app.handle().clone();
+            let _ = ctrlc::set_handler(move || {
+                graceful_quit(&handle_sig, "signal");
+            });
+
+            // 调试追踪：死锁诊断专用（先初始化，后续 guardian/锁操作才有日志）
+            trace::init(&ctx.data_dir);
+
+            // 守护进程布防：接力日志转存审计（此前发生的被杀/拉起/篡改拒绝事件）→ 写握手文件 → 拉起守护进程
+            let _g = trace::Span::new("guardian", "drain_log+arm+watchdog");
+            guardian::drain_log(&ctx);
+            guardian::arm(&ctx);
+            tauri::async_runtime::spawn(guardian::watchdog_task(ctx.clone()));
+
+            // NETON toolhomes：建目录 + 缺 python venv 时后台补建（静默失败，不阻塞启动）
+            {
+                let te_ctx = ctx.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    // 插件同步必须先于 venv 创建：venv 要跑几十秒的 python -m venv，
+                    // 串在前面会把插件注册推迟一分钟（期间模型看不到插件工具/记忆）
+                    crate::plugins::sync(&te_ctx);
+                    crate::toolenv::ensure_init(&te_ctx);
+                });
+            }
+
+            // 插件定时任务调度循环（每 30 秒检查一次到期任务）
+            {
+                let pl_ctx = ctx.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::plugins::scheduler(pl_ctx).await;
+                });
+            }
+
+            // 解释器探测移到后台：不阻塞窗口显示（修复启动慢/白屏）
+            let rt_ctx = ctx.clone();
+            let rt_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if rt_ctx.refresh_runtimes() {
+                    use tauri::Emitter;
+                    let _ = rt_app.emit("runtimes-updated", ());
+                }
+            });
+
+            // 系统托盘（关闭窗口后程序驻留后台）
+            tray::create(app.handle(), &ctx)?;
+
+            // 开机自启：以配置为准同步系统登录项（配置是唯一真源，修复登录项被系统/用户清理后的漂移）
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let autostart_wanted = ctx.config.lock().unwrap().autostart;
+                let manager = app.autolaunch();
+                let cur = manager.is_enabled().unwrap_or(false);
+                if cur != autostart_wanted {
+                    let r = if autostart_wanted { manager.enable() } else { manager.disable() };
+                    if let Err(e) = r {
+                        eprintln!("[NETON] autostart sync failed: {e}");
+                    }
+                }
+            }
+
+            // 远程访问 HTTP 服务
+            let http_ctx = ctx.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = http_api::restart_server(&http_ctx).await {
+                    eprintln!("[NETON] http server error: {e}");
+                }
+            });
+
+            // 后台拉取激活提供方的模型列表：尽量获取各模型最大上下文（写入 model_context 缓存，失败静默）
+            let mf_ctx = ctx.clone();
+            tauri::async_runtime::spawn(async move {
+                let p = mf_ctx.ai_config.lock().unwrap().active().cloned();
+                if let Some(p) = p {
+                    commands::refresh_model_context(&mf_ctx, &p.protocol, &p.base_url, &p.api_key).await;
+                }
+            });
+
+            // Autopilot：记忆/技能自动总结循环（小圆片播放/暂停）
+            let auto_ctx = ctx.clone();
+            tauri::async_runtime::spawn(async move {
+                autopilot::run(auto_ctx).await;
+            });
+
+            // 自动更新：启动后静默检测 + 下载（下载完成发 update-state 事件）
+            let upd_ctx = ctx.clone();
+            let upd_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                update::auto_update_task(upd_app, upd_ctx).await;
+            });
+
+            Ok(())
+        })
+        // 关闭窗口 = 最小化到托盘（后台继续运行 HTTP 服务与 Autopilot）
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::is_headless,
+            commands::ui_mounted,
+            commands::check_updates,
+            commands::update_download,
+            commands::update_apply,
+            commands::open_external,
+            commands::install_cli,
+            commands::mem_usage,
+            commands::get_overview,
+            commands::list_tools,
+            commands::register_tool,
+            commands::register_script_tool,
+            commands::remove_tool,
+            commands::set_tool_enabled,
+            commands::save_file_as,
+            commands::invoke_tool,
+            commands::list_runtimes,
+            commands::refresh_runtimes,
+            commands::add_runtime,
+            commands::remove_runtime,
+            commands::set_runtime_enabled,
+            commands::run_script,
+            commands::list_audit,
+            commands::clear_audit,
+            commands::delete_audit_entry,
+            commands::get_remote_config,
+            commands::get_remote_status,
+            commands::save_remote_config,
+            commands::regenerate_client_key,
+            commands::get_behavior_settings,
+            commands::set_behavior_settings,
+            commands::get_guard_limits,
+            commands::set_guard_limits,
+            commands::get_tool_env_settings,
+            commands::set_tool_env_settings,
+            commands::list_plugins,
+            commands::toggle_plugin,
+            commands::refresh_plugins,
+            commands::get_custom_prompt,
+            commands::set_custom_prompt,
+            commands::set_hotkey,
+            commands::get_hotkey,
+            commands::get_syntax_check,
+            commands::set_syntax_check,
+            commands::set_desktop_tools,
+            commands::get_desktop_tools,
+            commands::get_system_prompt,
+            commands::set_system_prompt,
+            commands::save_cloud_relay,
+            commands::save_stun_servers,
+            commands::get_lan_info,
+            commands::get_remote_qr,
+            commands::qr_svg_url,
+            commands::save_access_password,
+            commands::regenerate_access_password,
+            commands::test_connectivity,
+            commands::list_providers,
+            commands::add_provider,
+            commands::update_provider,
+            commands::remove_provider,
+            commands::set_provider_active,
+            commands::chat,
+            commands::chat_stream,
+            commands::subagent_spawn,
+            commands::subagent_running,
+            commands::stop_subagent,
+            commands::cancel_shell,
+            commands::list_running_shells,
+            commands::extract_file,
+            commands::fetch_webpage,
+            commands::check_port,
+            commands::compress_session,
+            commands::mcp_discover,
+            commands::mcp_connect,
+            commands::mcp_list,
+            commands::mcp_toggle,
+            commands::mcp_remove,
+            commands::mcp_import,
+            commands::chat_interrupt,
+            commands::tool_approve,
+            commands::set_tool_approval,
+            commands::get_tool_approval,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::get_elevation,
+            commands::set_elevation,
+            commands::get_tool_stats,
+            commands::get_diagnostics,
+            commands::get_ai_params,
+            commands::set_ai_params,
+            commands::list_provider_models,
+            commands::context_preview,
+            commands::context_metrics,
+            commands::list_sessions,
+            commands::get_session,
+            commands::create_session,
+            commands::set_active_session,
+            commands::rename_session,
+            commands::delete_session,
+            commands::delete_sessions,
+            commands::set_session_favorite,
+            commands::set_session_color,
+            commands::clear_session,
+            commands::list_memories,
+            commands::add_memory,
+            commands::delete_memories,
+            commands::list_skills,
+            commands::add_skill,
+            commands::delete_skills,
+            commands::toggle_autopilot,
+            commands::list_goals,
+            commands::create_goal,
+            commands::update_goal_status,
+            commands::remove_goal,
+            commands::list_todos,
+            commands::add_todo,
+            commands::update_todo_status,
+            commands::remove_todo,
+            commands::open_path,
+            commands::quit_app,
+            // ---------- 网络安全工具 ----------
+            commands_netsec::port_scan,
+            commands_netsec::password_crack,
+            commands_netsec::weak_password_analyze,
+            commands_netsec::weak_password_batch,
+            commands_netsec::arp_scan,
+            commands_netsec::get_local_interfaces,
+            commands_netsec::sql_injection_test,
+            commands_netsec::cve_search,
+            commands_netsec::cve_statistics,
+            commands_netsec::captcha_recognize,
+            commands_netsec::captcha_difficulty,
+            commands_netsec::domain_dns_lookup,
+            commands_netsec::domain_whois,
+            commands_netsec::domain_subdomain_enum,
+            commands_netsec::domain_analyze,
+            commands_netsec::topology_traceroute,
+            commands_netsec::topology_local,
+            commands_netsec::topology_ping,
+            commands_netsec::nat_detect,
+            commands_netsec::nat_info,
+            commands_netsec::virus_scan_file,
+            commands_netsec::virus_scan_directory,
+            commands_netsec::virus_compute_hashes,
+            commands_netsec::vbrowser_launch,
+            commands_netsec::vbrowser_close,
+            commands_netsec::vbrowser_list,
+            commands_netsec::vbrowser_navigate,
+            commands_netsec::vbrowser_screenshot,
+            commands_netsec::vbrowser_execute_js,
+            commands_netsec::vbrowser_page_source,
+            // ---------- 网页分析 ----------
+            commands_netsec::web_analyze,
+            commands_netsec::web_extract_links,
+            commands_netsec::web_extract_forms,
+            commands_netsec::web_check_security_headers,
+            commands_netsec::web_detect_tech,
+            commands_netsec::web_find_sensitive,
+            // ---------- 爬虫工具 ----------
+            commands_netsec::crawl_start,
+            commands_netsec::crawl_extract_links,
+            commands_netsec::crawl_check_dead_links,
+            commands_netsec::crawl_get_sitemap,
+            // ---------- 站点信息分析 ----------
+            commands_netsec::site_analyze,
+            commands_netsec::site_detect_cms,
+            commands_netsec::site_detect_server,
+            commands_netsec::site_detect_tech_stack,
+            commands_netsec::site_detect_cdn,
+            commands_netsec::site_ssl_info,
+            commands_netsec::site_subdomain_scan,
+            commands_netsec::site_dir_scan,
+            commands_netsec::site_security_score,
+            // ---------- 设备接入接口 ----------
+            commands_netsec::device_http_request,
+            commands_netsec::device_modbus_read,
+            commands_netsec::device_modbus_write,
+            commands_netsec::device_mqtt_publish,
+            commands_netsec::device_mqtt_subscribe,
+            commands_netsec::device_snmp_get,
+            commands_netsec::device_snmp_walk,
+            commands_netsec::device_get_templates,
+            commands_netsec::device_stress_test,
+            // ---------- Web漏洞扫描 ----------
+            commands_netsec::vuln_scan_all,
+            commands_netsec::vuln_scan_xss,
+            commands_netsec::vuln_scan_csrf,
+            commands_netsec::vuln_scan_file_include,
+            commands_netsec::vuln_scan_cmd_injection,
+            commands_netsec::vuln_scan_xxe,
+            commands_netsec::vuln_scan_ssrf,
+            commands_netsec::vuln_scan_open_redirect,
+            commands_netsec::vuln_scan_clickjacking,
+            // ---------- 数据包捕获分析 ----------
+            commands_netsec::packet_list_interfaces,
+            commands_netsec::packet_start_capture,
+            commands_netsec::packet_stop_capture,
+            commands_netsec::packet_get_stats,
+            commands_netsec::packet_get_dns,
+            commands_netsec::packet_get_http,
+            commands_netsec::packet_get_arp_table,
+            commands_netsec::packet_detect_arp_spoof,
+            commands_netsec::packet_export,
+            // ---------- 哈希破解与编码转换 ----------
+            commands_netsec::hash_compute,
+            commands_netsec::hash_compute_file,
+            commands_netsec::hash_compute_all,
+            commands_netsec::hash_crack,
+            commands_netsec::hash_identify,
+            commands_netsec::encode_decode,
+            commands_netsec::encode_batch,
+            commands_netsec::crypto_aes_encrypt,
+            commands_netsec::crypto_aes_decrypt,
+            commands_netsec::crypto_xor,
+            commands_netsec::crypto_random,
+            commands_netsec::crypto_uuid,
+            commands_netsec::file_identify_format,
+            commands_netsec::crypto_caesar,
+            commands_netsec::crypto_vigenere,
+            // ---------- 防火墙与DNS安全 ----------
+            commands_netsec::fw_test_ports,
+            commands_netsec::fw_test_port_range,
+            commands_netsec::fw_bypass_test,
+            commands_netsec::fw_audit,
+            commands_netsec::dns_get_servers,
+            commands_netsec::dns_speed_test,
+            commands_netsec::dns_leak_test,
+            commands_netsec::dns_poison_detect,
+            commands_netsec::dns_dnssec_check,
+            commands_netsec::dns_email_security,
+            commands_netsec::dns_reverse,
+            commands_netsec::dns_tunnel_detect,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building NETON")
+        .run(|app, event| {
+            // macOS：点击 Dock 图标时若主窗口隐藏则重新显示
+            // （Windows 任务栏点击自带唤起，macOS 需要 Reopen 事件处理）
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main_window(app);
+            }
+
+            // Cmd+Q（macOS）/ 系统退出请求：走真正退出链路，
+            // 与托盘退出 / quit_app command 一致——通知守护进程 + 静默更新。
+            // 注意：ExitRequested 只在真实退出请求时触发（窗口关闭被 prevent_close 拦截为隐藏），
+            // 循环默认继续退出流程；此处绝不能再调 app.exit(0)——会重入再次触发
+            // ExitRequested（审计出现 9~10s 间隔连环 app.quit、进程永不退出的根因）
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(ctx) = app.try_state::<Arc<crate::state::Ctx>>() {
+                    crate::audit::record(&ctx, "local-app", "app.quit", "NETON",
+                        serde_json::json!({ "via": "exit_requested" }), true);
+                    crate::guardian::expect_exit(&ctx);
+                    let _ = crate::update::apply_update(&ctx, false);
+                }
+            }
+        });
+}
+
+/// Windows release 版是 GUI 子系统（无控制台），`NETON tui` 从终端启动时
+/// 需先挂接父进程控制台并重新打开标准流，否则输出会静默丢失。
+#[cfg(windows)]
+fn attach_console() {
+    extern "system" {
+        fn AttachConsole(dw_process_id: u32) -> i32;
+        fn SetStdHandle(n_std_handle: u32, handle: isize) -> i32;
+        fn GetStdHandle(n_std_handle: u32) -> isize;
+        fn GetConsoleOutputCP() -> u32;
+        fn SetConsoleOutputCP(w_code_page_id: u32) -> i32;
+        fn GetConsoleCP() -> u32;
+        fn SetConsoleCP(w_code_page_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    const STD_INPUT_HANDLE: u32 = (-10i32) as u32;
+    const STD_OUTPUT_HANDLE: u32 = (-11i32) as u32;
+    const STD_ERROR_HANDLE: u32 = (-12i32) as u32;
+    const CP_UTF8: u32 = 65001;
+    unsafe {
+        // stdout 已有有效句柄（父进程管道重定向，如 E2E / CI）→ 绝不能覆盖，
+        // 否则输出会改道 CONOUT$ 导致管道收不到任何内容
+        let out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if out != 0 && out != -1 {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return;
+        }
+        // File 对象 Drop 会 CloseHandle：SetStdHandle 登记后若放任作用域结束，
+        // 标准流句柄立即失效（句柄值还可能被后续 CreateFile 复用），TUI 秒退且输出全丢。
+        // 故意 mem::forget 泄漏，让句柄存活到进程结束。
+        use std::os::windows::io::AsRawHandle;
+        if let Ok(f) = std::fs::OpenOptions::new().read(true).open("CONIN$") {
+            SetStdHandle(STD_INPUT_HANDLE, f.as_raw_handle() as _);
+            std::mem::forget(f);
+        }
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            SetStdHandle(STD_OUTPUT_HANDLE, f.as_raw_handle() as _);
+            SetStdHandle(STD_ERROR_HANDLE, f.as_raw_handle() as _);
+            std::mem::forget(f);
+        }
+        // Rust 按 UTF-8 直写标准流：中文 Windows 控制台默认 GBK(936) 会把 TUI 中文打成乱码，
+        // 读入同理。切到 UTF-8 并记录原值，进程退出前 restore_console_cp() 还原，不污染用户终端。
+        let po = GetConsoleOutputCP();
+        if po != CP_UTF8 {
+            SetConsoleOutputCP(CP_UTF8);
+            PREV_OUTPUT_CP.store(po, std::sync::atomic::Ordering::Relaxed);
+        }
+        let pi = GetConsoleCP();
+        if pi != CP_UTF8 {
+            SetConsoleCP(CP_UTF8);
+            PREV_INPUT_CP.store(pi, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// attach_console 切代码页前的原值（0 = 未改动，无需还原）
+#[cfg(windows)]
+static PREV_OUTPUT_CP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(windows)]
+static PREV_INPUT_CP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// TUI 退出前还原控制台代码页（attach 时改过才还原）
+#[cfg(windows)]
+pub fn restore_console_cp() {
+    extern "system" {
+        fn SetConsoleOutputCP(w_code_page_id: u32) -> i32;
+        fn SetConsoleCP(w_code_page_id: u32) -> i32;
+    }
+    let po = PREV_OUTPUT_CP.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if po != 0 {
+        unsafe {
+            SetConsoleOutputCP(po);
+        }
+    }
+    let pi = PREV_INPUT_CP.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if pi != 0 {
+        unsafe {
+            SetConsoleCP(pi);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn restore_console_cp() {}

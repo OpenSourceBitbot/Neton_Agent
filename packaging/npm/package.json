@@ -1,0 +1,33 @@
+{
+  "name": "NETON-agent",
+  "version": "0.5.11",
+  "description": "NETON - 本地优先的 AI Agent 工具集（MCP / 工具注册 / 技能）。安装后自动下载对应平台的 NETON 应用。",
+  "bin": {
+    "NETON-agent": "bin/NETON-agent.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "mcp",
+    "tauri",
+    "NETON"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yxpil/NETON.git"
+  },
+  "homepage": "https://github.com/yxpil/NETON",
+  "bugs": "https://github.com/yxpil/NETON/issues"
+}

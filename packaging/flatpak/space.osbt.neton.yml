@@ -1,0 +1,52 @@
+app-id: com.neton.netsec
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: neton
+separate-locales: false
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --filesystem=home
+  - --socket=pulseaudio
+modules:
+  - name: ayatana-ido
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DENABLE_GTKDOC=OFF
+      - -DCMAKE_INSTALL_LIBDIR=lib
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /lib/*.la
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/ayatana-ido/archive/refs/tags/0.10.4.tar.gz
+        sha256: bd59abd5f1314e411d0d55ce3643e91cef633271f58126be529de5fb71c5ab38
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+  - name: neton
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+      env:
+        npm_config_yes: 'true'
+      build-args:
+        - --share=network
+    build-commands:
+      - npm install --offline --cache .npm-flatpak-cache --no-audit --no-fund
+      - npm run tauri build -- --no-bundle -- --no-default-features
+      - install -Dm755 src-tauri/target/release/neton /app/bin/neton
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/com.neton.netsec.png
+      - install -Dm644 packaging/flatpak/space.osbt.neton.desktop /app/share/applications/com.neton.netsec.desktop
+      - install -Dm644 packaging/flatpak/space.osbt.neton.metainfo.xml /app/share/metainfo/com.neton.netsec.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..

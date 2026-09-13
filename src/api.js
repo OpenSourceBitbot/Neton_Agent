@@ -1,0 +1,394 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+export const api = {
+  overview: () => invoke("get_overview"),
+  listTools: () => invoke("list_tools"),
+  registerTool: (name, description, url) => invoke("register_tool", { name, description, url }),
+  registerScriptTool: (name, description, runtime, code) =>
+    invoke("register_script_tool", { name, description, runtime, code }),
+  removeTool: (id) => invoke("remove_tool", { id }),
+  setToolEnabled: (id, enabled) => invoke("set_tool_enabled", { id, enabled }),
+  invokeTool: (id, params) => invoke("invoke_tool", { id, params }),
+  listRuntimes: () => invoke("list_runtimes"),
+  refreshRuntimes: () => invoke("refresh_runtimes"),
+  addRuntime: (id, name, path, lang) => invoke("add_runtime", { id, name, path, lang }),
+  removeRuntime: (id) => invoke("remove_runtime", { id }),
+  setRuntimeEnabled: (id, enabled) => invoke("set_runtime_enabled", { id, enabled }),
+  runScript: (runtime, code, params) => invoke("run_script", { runtime, code, params }),
+  listAudit: () => invoke("list_audit"),
+  clearAudit: () => invoke("clear_audit"),
+  deleteAuditEntry: (id) => invoke("delete_audit_entry", { id }),
+  getRemoteConfig: () => invoke("get_remote_config"),
+  installCli: () => invoke("install_cli"),
+  saveRemoteConfig: (remote_enabled, host, port) =>
+    // Tauri v2 按 camelCase 匹配 Rust 多词参数：remote_enabled → remoteEnabled
+    invoke("save_remote_config", { remoteEnabled: remote_enabled, host, port }),
+  regenerateClientKey: () => invoke("regenerate_client_key"),
+  saveAccessPassword: (password, password_enabled) =>
+    invoke("save_access_password", { password, passwordEnabled: password_enabled }),
+  regenerateAccessPassword: () => invoke("regenerate_access_password"),
+  testConnectivity: () => invoke("test_connectivity"),
+  // 幻觉防护阈值：单回复词重复上限 / 单回合工具轮上限（0=关闭）
+  getGuardLimits: () => invoke("get_guard_limits"),
+  setGuardLimits: (word_repeat_max, tool_loop_max) =>
+    invoke("set_guard_limits", { wordRepeatMax: word_repeat_max, toolLoopMax: tool_loop_max }),
+  // 工具环境：自定义工具超时（秒）+ 默认 shell（空=自动识别，列表来自本机探测）
+  getToolEnvSettings: () => invoke("get_tool_env_settings"),
+  setToolEnvSettings: (tool_timeout_secs, default_shell) =>
+    invoke("set_tool_env_settings", { toolTimeoutSecs: tool_timeout_secs, defaultShell: default_shell }),
+  // 本地插件（toolhomes/plugins/*/plugin.json）
+  listPlugins: () => invoke("list_plugins"),
+  togglePlugin: (id, enabled) => invoke("toggle_plugin", { id, enabled }),
+  refreshPlugins: () => invoke("refresh_plugins"),
+  // 用户自定义提示词/人设
+  getCustomPrompt: () => invoke("get_custom_prompt"),
+  setCustomPrompt: (custom_prompt) => invoke("set_custom_prompt", { customPrompt: custom_prompt }),
+  getSystemPrompt: () => invoke("get_system_prompt"),
+  setSystemPrompt: (system_prompt) => invoke("set_system_prompt", { systemPrompt: system_prompt }),
+  getBehaviorSettings: () => invoke("get_behavior_settings"),
+  // blocked_words 敏感词表：传数组=整体替换；传 [] = 恢复内置默认；不传 = 保持原值
+  setBehaviorSettings: (auto_drive, tool_approval, moderation_enabled, auto_delegate, compat_mode, subagent_max, blocked_words) =>
+    invoke("set_behavior_settings", {
+      autoDrive: auto_drive,
+      toolApproval: tool_approval,
+      moderationEnabled: moderation_enabled,
+      autoDelegate: auto_delegate,
+      compatMode: compat_mode,
+      subagentMax: subagent_max ?? 3,
+      blockedWords: blocked_words,
+    }),
+  // 子代理（宿主调度）：模型侧无此工具，只有宿主/用户能派生
+  spawnSubagent: (task, title, session_id) =>
+    invoke("subagent_spawn", { task, title: title || null, sessionId: session_id || null }),
+  subagentRunning: () => invoke("subagent_running"),
+  stopSubagent: (session_id) => invoke("stop_subagent", { sessionId: session_id }),
+  cancelShell: (job_id) => invoke("cancel_shell", { jobId: job_id }),
+  listRunningShells: () => invoke("list_running_shells"),
+  // 远程二维码：网络探测（LAN/公网候选 + NAT 粗判）→ 返回 { payload, svg }
+  getRemoteQr: () => invoke("get_remote_qr"),
+  getLanInfo: () => invoke("get_lan_info"),
+  // 云中继地址（对称 NAT 时手机端改连），空串清除
+  saveCloudRelay: (url) => invoke("save_cloud_relay", { url }),
+  // 自定 STUN 列表（NAT 探测数据源），空数组恢复内置默认
+  saveStunServers: (servers) => invoke("save_stun_servers", { servers }),
+  listProviders: () => invoke("list_providers"),
+  addProvider: (name, protocol, base_url, api_key, model) =>
+    invoke("add_provider", { name, protocol, baseUrl: base_url, apiKey: api_key, model }),
+  updateProvider: (id, name, protocol, base_url, api_key, model) =>
+    invoke("update_provider", { id, name, protocol, baseUrl: base_url, apiKey: api_key, model }),
+  removeProvider: (id) => invoke("remove_provider", { id }),
+  setProviderActive: (id, active) => invoke("set_provider_active", { id, active }),
+  // 模型采样参数：temperature null=默认（0-2）；reasoningEffort ""=默认 / low / medium / high
+  getAiParams: () => invoke("get_ai_params"),
+  setAiParams: (temperature, reasoning_effort) =>
+    invoke("set_ai_params", { temperature, reasoningEffort: reasoning_effort }),
+  // 从提供方 API 拉取可用模型列表（OpenAI /models、Gemini /v1beta/models、Claude /v1/models）
+  listProviderModels: (protocol, base_url, api_key) =>
+    invoke("list_provider_models", { protocol, baseUrl: base_url, apiKey: api_key }),
+  chat: (session_id, message, images) =>
+    invoke("chat", { sessionId: session_id, message, images: images || null }),
+  // 流式对话：过程通过 Tauri 事件 event_name 推送增量，onEvent 收到 {type, ...} payload。
+  // images 为可选的图片 base64 data URL 数组，仅随当前用户轮发给多模态模型。
+  // 返回一个 Promise，resolve 为最终完整消息列表；调用方应先订阅事件再 await。
+  chatStream: async (session_id, message, event_name, onEvent, images) => {
+    const ev = event_name || `chat-stream-${Date.now()}`;
+    const unlisten = await listen(ev, (e) => onEvent?.(e.payload));
+    try {
+      return await invoke("chat_stream", {
+        sessionId: session_id,
+        message,
+        eventName: ev,
+        images: images || null,
+      });
+    } finally {
+      unlisten();
+    }
+  },
+  // 解析上传文件：Excel→Markdown 表格 / Word(.docx)→纯文本 / CSV→原文。data 为 base64（可含 data:URL 前缀）
+  extractFile: (filename, data) => invoke("extract_file", { filename, data }),
+  // 用系统默认程序打开文件；reveal=true 时打开所在文件夹并定位
+  openPath: (path, reveal) => invoke("open_path", { path, reveal: !!reveal }),
+  // 另存为：原生保存对话框，path 支持本地路径或 data:URL；返回保存路径（取消 null）
+  saveFileAs: (path, suggestedName) => invoke("save_file_as", { path, suggestedName: suggestedName || null }),
+  // 抓取网页正文，返回 { title, text }
+  fetchWebpage: (url) => invoke("fetch_webpage", { url }),
+  // 端口冲突检测：返回 { available, addr, reason? }
+  checkPort: (host, port) => invoke("check_port", { host, port }),
+  // 手动压缩会话：AI 总结全部历史为一条摘要，返回新消息列表
+  compressSession: (session_id) => invoke("compress_session", { sessionId: session_id || "" }),
+
+  // ── MCP（Model Context Protocol）接入 ──
+  mcpDiscover: (host, start, end) => invoke("mcp_discover", { host, start, end }),
+  mcpConnect: (url) => invoke("mcp_connect", { url }),
+  mcpList: () => invoke("mcp_list"),
+  mcpToggle: (id, enabled) => invoke("mcp_toggle", { id, enabled }),
+  mcpRemove: (id) => invoke("mcp_remove", { id }),
+  mcpImport: (id) => invoke("mcp_import", { id }),
+
+  // ── 中断 / 工具审批 / 上下文预览 ──
+  chatInterrupt: (session_id) => invoke("chat_interrupt", { sessionId: session_id || "" }),
+  toolApprove: (id, allow) => invoke("tool_approve", { id, allow }),
+  setToolApproval: (mode) => invoke("set_tool_approval", { mode }),
+  getToolApproval: () => invoke("get_tool_approval"),
+  getAutostart: () => invoke("get_autostart"),
+  setAutostart: (enabled) => invoke("set_autostart", { enabled }),
+  // 全局快捷键：唤出主界面（空 = 关闭）
+  getHotkey: () => invoke("get_hotkey"),
+  setHotkey: (hotkey) => invoke("set_hotkey", { hotkey }),
+  // 本机操控开关（screen/mouse/keyboard/draw_diagram/view_image，实验性；默认全关）
+  getDesktopTools: () => invoke("get_desktop_tools"),
+  setDesktopTools: (screen, mouse, keyboard, diagram, viewimage) => invoke("set_desktop_tools", { screen, mouse, keyboard, diagram, viewimage }),
+  // 写文件后轻量语法检查（json/js/py）：出错提醒模型与用户
+  getSyntaxCheck: () => invoke("get_syntax_check"),
+  setSyntaxCheck: (enabled) => invoke("set_syntax_check", { enabled }),
+  getElevation: () => invoke("get_elevation"),
+  setElevation: (enabled) => invoke("set_elevation", { enabled }),
+  // 自动运行：后台自主循环（记忆总结 / 技能提炼 / 目标行动），AI 设置里的圆钮开关
+  toggleAutopilot: () => invoke("toggle_autopilot"),
+  // ── 版本更新：检查 / 后台下载（进度走 update-progress 事件）/ 换装重启 ──
+  checkUpdates: () => invoke("check_updates"),
+  updateDownload: () => invoke("update_download"),
+  updateApply: () => invoke("update_apply"),
+  getToolStats: () => invoke("get_tool_stats"),
+  getDiagnostics: () => invoke("get_diagnostics"),
+  contextPreview: (session_id) => invoke("context_preview", { sessionId: session_id || "" }),
+  contextMetrics: (session_id) => invoke("context_metrics", { sessionId: session_id || "" }),
+  listSessions: () => invoke("list_sessions"),
+  getSession: (session_id) => invoke("get_session", { sessionId: session_id || "" }),
+  createSession: (title) => invoke("create_session", { title: title || "" }),
+  setActiveSession: (session_id) => invoke("set_active_session", { sessionId: session_id }),
+  renameSession: (session_id, title) => invoke("rename_session", { sessionId: session_id, title }),
+  deleteSession: (session_id) => invoke("delete_session", { sessionId: session_id }),
+  deleteSessions: (session_ids) => invoke("delete_sessions", { sessionIds: session_ids }),
+  setSessionFavorite: (session_id, favorite) =>
+    invoke("set_session_favorite", { sessionId: session_id, favorite }),
+  setSessionColor: (session_id, color) => invoke("set_session_color", { sessionId: session_id, color }),
+  clearSession: (session_id) => invoke("clear_session", { sessionId: session_id || "" }),
+  listMemories: () => invoke("list_memories"),
+  addMemory: (content) => invoke("add_memory", { content }),
+  deleteMemories: (ids) => invoke("delete_memories", { ids }),
+  listSkills: () => invoke("list_skills"),
+  addSkill: (name, summary) => invoke("add_skill", { name, summary }),
+  deleteSkills: (ids) => invoke("delete_skills", { ids }),
+  listGoals: () => invoke("list_goals"),
+  createGoal: (title, detail) => invoke("create_goal", { title, detail }),
+  updateGoalStatus: (id, status) => invoke("update_goal_status", { id, status }),
+  removeGoal: (id) => invoke("remove_goal", { id }),
+  listTodos: () => invoke("list_todos"),
+  addTodo: (content, goal_id) => invoke("add_todo", { content, goalId: goal_id }),
+  updateTodoStatus: (id, status) => invoke("update_todo_status", { id, status }),
+  removeTodo: (id) => invoke("remove_todo", { id }),
+  quitApp: () => invoke("quit_app"),
+
+  // ── 网络安全工具 API ──
+
+  // 端口扫描
+  portScan: (target, portStart, portEnd, scanType) =>
+    invoke("port_scan", { target, portStart, portEnd, scanType }),
+
+  // ARP 设备扫描
+  arpScan: (subnet) => invoke("arp_scan", { subnet }),
+
+  // 网络拓扑分析（traceroute）
+  traceroute: (target, maxHops) => invoke("traceroute", { target, maxHops }),
+
+  // NAT 类型分析
+  natAnalyze: () => invoke("nat_analyze"),
+
+  // 密码爆破
+  passwordCrack: (target, protocol, username, dictPath) =>
+    invoke("password_crack", { target, protocol, username, dictPath }),
+
+  // SQL 注入测试
+  sqlInjectionTest: (url, param, method, testType) =>
+    invoke("sql_injection_test", { url, param, method, testType }),
+
+  // Web 漏洞扫描
+  vulnScanAll: (url, deep) => invoke("vuln_scan_all", { url, deep: !!deep }),
+  vulnScanXss: (url, param, method) =>
+    invoke("vuln_scan_xss", { url, param, method }),
+  vulnScanCsrf: (url) => invoke("vuln_scan_csrf", { url }),
+  vulnScanFileInclude: (url, param) =>
+    invoke("vuln_scan_file_include", { url, param }),
+  vulnScanCmdInjection: (url, param) =>
+    invoke("vuln_scan_cmd_injection", { url, param }),
+  vulnScanXxe: (url) => invoke("vuln_scan_xxe", { url }),
+  vulnScanSsrf: (url, param) => invoke("vuln_scan_ssrf", { url, param }),
+  vulnScanOpenRedirect: (url, param) =>
+    invoke("vuln_scan_open_redirect", { url, param }),
+  vulnScanClickjacking: (url) => invoke("vuln_scan_clickjacking", { url }),
+
+  // CVE 漏洞搜索
+  cveSearch: (keyword) => invoke("cve_search", { keyword }),
+  cveDetail: (cveId) => invoke("cve_detail", { cveId }),
+
+  // DNS 查询
+  dnsLookup: (domain) => invoke("dns_lookup", { domain }),
+
+  // 子域名枚举
+  subdomainEnum: (domain) => invoke("subdomain_enum", { domain }),
+
+  // WHOIS 查询
+  whoisQuery: (domain) => invoke("whois_query", { domain }),
+
+  // 验证码识别
+  captchaRecognize: (imageData, type) =>
+    invoke("captcha_recognize", { imageData, type }),
+  captchaRecognizeUrl: (url, type) =>
+    invoke("captcha_recognize_url", { url, type }),
+
+  // 病毒扫描
+  virusScan: (filePath, mode) => invoke("virus_scan", { filePath, mode }),
+
+  // 文件哈希分析
+  hashAnalyze: (filePath) => invoke("hash_analyze", { filePath }),
+
+  // 虚拟浏览器
+  virtualBrowserStart: () => invoke("virtual_browser_start"),
+  virtualBrowserStop: (browserId) => invoke("virtual_browser_stop", { browserId }),
+  virtualBrowserNavigate: (browserId, url) =>
+    invoke("virtual_browser_navigate", { browserId, url }),
+  virtualBrowserScreenshot: (browserId) =>
+    invoke("virtual_browser_screenshot", { browserId }),
+  virtualBrowserRefresh: (browserId) =>
+    invoke("virtual_browser_refresh", { browserId }),
+
+  // 网页分析
+  webAnalyze: (url, deep) => invoke("web_analyze", { url, deep: !!deep }),
+  webExtractLinks: (url) => invoke("web_extract_links", { url }),
+  webExtractForms: (url) => invoke("web_extract_forms", { url }),
+  webCheckSecurityHeaders: (url) => invoke("web_check_security_headers", { url }),
+  webDetectTech: (url) => invoke("web_detect_tech", { url }),
+  webFindSensitive: (url) => invoke("web_find_sensitive", { url }),
+
+  // 站点信息分析
+  siteAnalyze: (url, deep) => invoke("site_analyze", { url, deep: !!deep }),
+  siteDetectCms: (url) => invoke("site_detect_cms", { url }),
+  siteDetectServer: (url) => invoke("site_detect_server", { url }),
+  siteDetectTechStack: (url) => invoke("site_detect_tech_stack", { url }),
+  siteDetectCdn: (url) => invoke("site_detect_cdn", { url }),
+  siteSslInfo: (url) => invoke("site_ssl_info", { url }),
+  siteSubdomainScan: (domain, count) =>
+    invoke("site_subdomain_scan", { domain, count: count || 50 }),
+  siteDirScan: (url, count) => invoke("site_dir_scan", { url, count: count || 100 }),
+  siteSecurityScore: (url) => invoke("site_security_score", { url }),
+
+  // 网络爬虫
+  crawlStart: (startUrl, maxPages, maxDepth, mode, delayMs, respectRobots) =>
+    invoke("crawl_start", { startUrl, maxPages, maxDepth, mode, delayMs, respectRobots }),
+  crawlStop: () => invoke("crawl_stop"),
+  crawlExtractLinks: (url, baseUrl) => invoke("crawl_extract_links", { url, baseUrl: baseUrl || null }),
+  crawlCheckDeadLinks: (url, maxPages) => invoke("crawl_check_dead_links", { url, maxPages }),
+  crawlGetSitemap: (url, maxPages) => invoke("crawl_get_sitemap", { url, maxPages }),
+
+  // 设备接入接口调试
+  deviceHttpRequest: (method, url, headers, body, bodyType, params, timeoutMs) =>
+    invoke("device_http_request", {
+      method,
+      url,
+      headers: headers || {},
+      body,
+      bodyType: bodyType || "none",
+      params: params || {},
+      timeoutMs: timeoutMs || 30000,
+    }),
+  deviceModbusRead: (host, port, slaveId, func, address, count) =>
+    invoke("device_modbus_read", { host, port, slaveId, func, address, count }),
+  deviceModbusWrite: (host, port, slaveId, address, value) =>
+    invoke("device_modbus_write", { host, port, slaveId, address, value }),
+  deviceMqttPublish: (broker, port, clientId, username, password, topic, payload, qos) =>
+    invoke("device_mqtt_publish", {
+      broker,
+      port,
+      clientId: clientId || "",
+      username: username || "",
+      password: password || "",
+      topic,
+      payload,
+      qos: qos || 0,
+    }),
+  deviceMqttSubscribe: (broker, port, clientId, username, password, topic, timeoutMs) =>
+    invoke("device_mqtt_subscribe", {
+      broker,
+      port,
+      clientId: clientId || "",
+      username: username || "",
+      password: password || "",
+      topic,
+      timeoutMs: timeoutMs || 10000,
+    }),
+  deviceSnmpGet: (host, community, oid, version) =>
+    invoke("device_snmp_get", { host, community, oid, version: version || "v2c" }),
+  deviceSnmpWalk: (host, community, oid, version) =>
+    invoke("device_snmp_walk", { host, community, oid, version: version || "v2c" }),
+  deviceGetTemplates: () => invoke("device_get_templates"),
+  deviceStressTest: (url, method, concurrent, durationSec, headers, body) =>
+    invoke("device_stress_test", {
+      url,
+      method,
+      concurrent,
+      durationSec,
+      headers: headers || {},
+      body: body || "",
+    }),
+
+  // 文件对话框（通用）
+  openFileDialog: (filters) => invoke("open_file_dialog", { filters: filters || null }),
+  openImageDialog: () => invoke("open_image_dialog"),
+
+  // ── 数据包捕获 ──
+  packetListInterfaces: () => invoke("packet_list_interfaces"),
+  packetStartCapture: (iface, filter, count, durationSec) =>
+    invoke("packet_start_capture", { iface, filter, count, durationSec }),
+  packetStopCapture: () => invoke("packet_stop_capture"),
+  packetGetStats: () => invoke("packet_get_stats"),
+  packetGetDns: () => invoke("packet_get_dns"),
+  packetGetHttp: () => invoke("packet_get_http"),
+  packetGetArpTable: () => invoke("packet_get_arp_table"),
+  packetDetectArpSpoof: () => invoke("packet_detect_arp_spoof"),
+  packetExport: (format, path) => invoke("packet_export", { format, path }),
+
+  // ── 哈希与密码学 ──
+  hashCompute: (text, algorithm) => invoke("hash_compute", { text, algorithm }),
+  hashComputeFile: (filePath, algorithm) => invoke("hash_compute_file", { filePath, algorithm }),
+  hashComputeAll: (text, algorithms, hmacKey) =>
+    invoke("hash_compute_all", { text, algorithms, hmacKey: hmacKey || null }),
+  hashCrack: (hash, hashType, mode, dictPath, maxLength, charset) =>
+    invoke("hash_crack", { hash, hashType, mode, dictPath, maxLength, charset }),
+  hashIdentify: (hash) => invoke("hash_identify", { hash }),
+  encodeDecode: (input, format, decode, shift) =>
+    invoke("encode_decode", { input, format, decode, shift: shift || 0 }),
+  encodeBatch: (input, formatsJson) => invoke("encode_batch", { input, formatsJson }),
+  cryptoAesEncrypt: (text, key, mode) => invoke("crypto_aes_encrypt", { text, key, mode }),
+  cryptoAesDecrypt: (text, key, mode) => invoke("crypto_aes_decrypt", { text, key, mode }),
+  cryptoXor: (text, key) => invoke("crypto_xor", { text, key }),
+  cryptoRandom: (length, charset) => invoke("crypto_random", { length, charset }),
+  cryptoUuid: (version) => invoke("crypto_uuid", { version }),
+  fileIdentifyFormat: (filePath) => invoke("file_identify_format", { filePath }),
+  cryptoCaesar: (text, shift, decrypt) => invoke("crypto_caesar", { text, shift, decrypt }),
+  cryptoVigenere: (text, key, decrypt) => invoke("crypto_vigenere", { text, key, decrypt }),
+
+  // ── 防火墙与 DNS 安全 ──
+
+  // 防火墙端口测试
+  fwTestPorts: (target, ports) => invoke("fw_test_ports", { target, ports }),
+  fwTestPortRange: (target, start, end) =>
+    invoke("fw_test_port_range", { target, start, end }),
+
+  // 防火墙绕过测试
+  fwBypassTest: (target, port) => invoke("fw_bypass_test", { target, port }),
+
+  // 防火墙安全审计
+  fwAudit: (target) => invoke("fw_audit", { target }),
+
+  // DNS 安全
+  dnsGetServers: () => invoke("dns_get_servers"),
+  dnsSpeedTest: (domains) => invoke("dns_speed_test", { domains }),
+  dnsLeakTest: () => invoke("dns_leak_test"),
+  dnsPoisonDetect: (domain) => invoke("dns_poison_detect", { domain }),
+  dnsDnssecCheck: (domain) => invoke("dns_dnssec_check", { domain }),
+  dnsEmailSecurity: (domain) => invoke("dns_email_security", { domain }),
+  dnsReverse: (ip) => invoke("dns_reverse", { ip }),
+  dnsTunnelDetect: (domain) => invoke("dns_tunnel_detect", { domain }),
+};

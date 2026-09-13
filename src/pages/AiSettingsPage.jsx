@@ -1,0 +1,1177 @@
+import { useEffect, useRef, useState } from "react";
+import { api } from "../api.js";
+import { useLang } from "../i18n.js";
+import PillSwitch from "../components/PillSwitch.jsx";
+import { IconPlus, IconTrash, IconSettings, IconCheck, IconX } from "../components/Icons.jsx";
+
+// 支持的协议：原生对接各家 API
+const PROTOCOLS = [
+  { id: "openai", label: "OpenAI", base: "https://api.openai.com/v1", model: "gpt-5.6-sol" },
+  { id: "gemini", label: "Gemini", base: "https://generativelanguage.googleapis.com", model: "gemini-3.7-flash" },
+  { id: "claude", label: "Claude", base: "https://api.anthropic.com", model: "claude-sonnet-5" },
+];
+const protoLabel = (id) => PROTOCOLS.find((p) => p.id === id)?.label || id;
+
+// 主流模型预设：点选自动填充协议 / Base URL / 模型名（各家用其官方最新旗舰，也可点「从 API 获取」拉全量列表）
+const PRESETS = [
+  { name: "OpenAI GPT-5.6", protocol: "openai", base: "https://api.openai.com/v1", model: "gpt-5.6-sol" },
+  { name: "DeepSeek", protocol: "openai", base: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { name: "Kimi K3", protocol: "openai", base: "https://api.moonshot.cn/v1", model: "kimi-k3" },
+  { name: "通义千问 Qwen", protocol: "openai", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" },
+  { name: "智谱 GLM-5.3", protocol: "openai", base: "https://open.bigmodel.cn/api/paas/v4", model: "glm-5.3" },
+  { name: "xAI Grok 4.6", protocol: "openai", base: "https://api.x.ai/v1", model: "grok-4.6" },
+  { name: "OpenRouter", protocol: "openai", base: "https://openrouter.ai/api/v1", model: "openrouter/auto" },
+  { name: "硅基流动", protocol: "openai", base: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
+  { name: "Ollama（本地）", protocol: "openai", base: "http://127.0.0.1:11434/v1", model: "qwen3" },
+  { name: "Google Gemini", protocol: "gemini", base: "https://generativelanguage.googleapis.com", model: "gemini-3.7-flash" },
+  { name: "Claude Sonnet 5", protocol: "claude", base: "https://api.anthropic.com", model: "claude-sonnet-5" },
+  { name: "Claude Fable 5", protocol: "claude", base: "https://api.anthropic.com", model: "claude-fable-5" },
+];
+
+const EMPTY = { id: null, name: "", protocol: "openai", base_url: "", api_key: "", model: "" };
+
+// AI 设置：可增删的多家提供方，用播放/暂停切换，每次仅一个激活
+export default function AiSettingsPage({ onStats, stats }) {
+  const { t } = useLang();
+  const [providers, setProviders] = useState([]);
+  const [form, setForm] = useState(EMPTY); // 新增 / 编辑用同一张表单
+  const [showForm, setShowForm] = useState(false); // 表单以悬浮弹窗呈现，平时不占页面空间
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  // 模型采样参数：temperature null=默认；reasoning_effort ""=默认 / low / medium / high
+  const [params, setParams] = useState({ temperature: null, reasoning_effort: "" });
+  const [paramsSaved, setParamsSaved] = useState(false);
+  // 幻觉防护阈值：word_repeat_max=单回复词重复上限 / tool_loop_max=单回合工具轮上限（0=关闭）
+  const [limits, setLimits] = useState({ word_repeat_max: 20, tool_loop_max: 20 });
+  const [limitsSaved, setLimitsSaved] = useState(false);
+  const [toolEnv, setToolEnv] = useState({ tool_timeout_secs: 120, default_shell: "", available_shells: [] });
+  const [toolEnvSaved, setToolEnvSaved] = useState(false);
+  // AI 行为设置：自动推进 / 审批模式 / 敏感词审核 / 兼容模式
+  const [behavior, setBehavior] = useState({
+    auto_drive: true,
+    auto_delegate: false,
+    subagent_max: 3,
+    tool_approval: "ask",
+    moderation_enabled: true,
+    compat_mode: false,
+  });
+  // 敏感词审核词表：文本为当前生效词表（未自定义时展示内置默认），每行一个词
+  const [wordsText, setWordsText] = useState("");
+  const [wordsCustom, setWordsCustom] = useState(false); // 是否已在用自定义词表
+  const [wordsDirty, setWordsDirty] = useState(false);
+  const [wordsSaved, setWordsSaved] = useState(false);
+  // 用户自定义提示词/人设
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [promptSaved, setPromptSaved] = useState(false);
+  // 系统提示词模板覆盖（空=用默认）
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [systemPromptSaved, setSystemPromptSaved] = useState(false);
+  // 开机自动启动：null=加载中；开启后登录系统即在后台驻留（托盘）
+  const [autostart, setAutostart] = useState(null);
+  // 唤出主界面的全局快捷键：文本框编辑 + 保存即生效（空 = 关闭）；冲突时后端返回错误原因
+  const [hotkey, setHotkey] = useState("");
+  const [hotkeySaved, setHotkeySaved] = useState(false);
+  const [hotkeyErr, setHotkeyErr] = useState("");
+  // 从提供方 API 拉取的模型列表（点击模型名直接填充）
+  const [remoteModels, setRemoteModels] = useState(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchModelsErr, setFetchModelsErr] = useState("");
+  const [baseHint, setBaseHint] = useState("");
+  // 高权限模式：elevation=null=探测中；elevErr=上次授权失败原因（v0.5.14 黑屏修复：声明漏写导致渲染期 ReferenceError 整树卸载）
+  const [elevation, setElevation] = useState(null);
+  const [elevErr, setElevErr] = useState("");
+  // 自动运行（后台自主循环：记忆总结 / 技能提炼 / 目标行动）——运行总览里的小圆钮
+  const [autoRun, setAutoRun] = useState(false);
+  // 本机操控开关（screen/mouse/keyboard/draw_diagram/view_image，默认全关）
+  const [deskTools, setDeskTools] = useState({ screen: false, mouse: false, keyboard: false, diagram: false, viewimage: false });
+  // 写文件后轻量语法检查（json/js/py）：出错提醒模型与用户
+  const [syntaxCheck, setSyntaxCheck] = useState(true);
+
+  const load = () =>
+    api.listProviders().then((r) => setProviders(r.providers || [])).catch(() => {});
+  useEffect(() => {
+    load();
+    api.getAiParams().then((r) => setParams({ temperature: r?.temperature ?? null, reasoning_effort: r?.reasoning_effort || "" })).catch(() => {});
+    api.getGuardLimits().then((r) => setLimits({ word_repeat_max: r?.word_repeat_max ?? 20, tool_loop_max: r?.tool_loop_max ?? 20 })).catch(() => {});
+    api
+      .getToolEnvSettings()
+      .then((r) =>
+        setToolEnv({
+          tool_timeout_secs: r?.tool_timeout_secs ?? 120,
+          default_shell: r?.default_shell || "",
+          available_shells: r?.available_shells || [],
+        })
+      )
+      .catch(() => {});
+    api
+      .getBehaviorSettings()
+      .then((r) => {
+        setBehavior({
+          auto_drive: r?.auto_drive ?? true,
+          auto_delegate: r?.auto_delegate ?? false,
+          subagent_max: r?.subagent_max ?? 3,
+          tool_approval: r?.tool_approval || "ask",
+          moderation_enabled: r?.moderation_enabled ?? true,
+          compat_mode: r?.compat_mode ?? false,
+        });
+        setWordsText((r?.blocked_words || []).join("\n"));
+        setWordsCustom(!!r?.blocked_words_custom);
+        setWordsDirty(false);
+      })
+      .catch(() => {});
+    api.getCustomPrompt().then((r) => setCustomPrompt(r?.custom_prompt || "")).catch(() => {});
+    api.getSystemPrompt().then((r) => setSystemPrompt(r?.system_prompt || "")).catch(() => {});
+    api.getAutostart().then((r) => setAutostart(!!r?.enabled)).catch(() => setAutostart(false));
+    api.getHotkey().then((r) => setHotkey(r?.hotkey || "")).catch(() => {});
+    api.getDesktopTools().then((r) => setDeskTools({ screen: !!r?.screen, mouse: !!r?.mouse, keyboard: !!r?.keyboard, diagram: !!r?.diagram, viewimage: !!r?.viewimage })).catch(() => {});
+    api.getElevation().then((r) => setElevation({ active: !!r?.active, enabled: !!r?.enabled })).catch(() => setElevation({ active: false, enabled: false }));
+  }, []);
+
+  // App 定时轮询 overview，stats.autopilot_running 变化时同步小圆钮状态
+  useEffect(() => setAutoRun(!!stats?.autopilot_running), [stats]);
+
+  // 开机自启开关：先落系统登录项，失败回滚显示原状态
+  const toggleAutostart = (enabled) => {
+    const prev = autostart;
+    setAutostart(enabled);
+    api.setAutostart(enabled).catch(() => setAutostart(prev));
+  };
+
+  // 高权限开关：成功即触发系统授权弹窗并以目标权限重启（当前进程随后自动退出）；
+  // 失败（用户取消授权等）回滚开关并显示原因
+  const toggleElevation = (enabled) => {
+    setElevation((e) => ({ ...(e || { active: false, enabled: false }), enabled }));
+    setElevErr("");
+    api.setElevation(enabled).catch((err) => {
+      api.getElevation().then((r) => setElevation({ active: !!r?.active, enabled: !!r?.enabled })).catch(() => {});
+      setElevErr(String(err).replace(/^.*Error[:：]\s*/, ""));
+    });
+  };
+
+  // 变更即保存（温度滑块拖动用 300ms 防抖，避免频繁落盘）
+  const debounceRef = useRef(null);
+  const saveParams = (next, debounce = false) => {
+    setParams(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const doSave = () => {
+      api.setAiParams(next.temperature, next.reasoning_effort).then(() => {
+        setParamsSaved(true);
+        setTimeout(() => setParamsSaved(false), 1500);
+      }).catch(() => {});
+    };
+    if (debounce) debounceRef.current = setTimeout(doSave, 300);
+    else doSave();
+  };
+
+  // 幻觉防护阈值变更即保存（300ms 防抖，0=关闭对应检测）
+  const limitsRef = useRef(null);
+  const saveLimits = (next) => {
+    setLimits(next);
+    if (limitsRef.current) clearTimeout(limitsRef.current);
+    limitsRef.current = setTimeout(() => {
+      api.setGuardLimits(next.word_repeat_max, next.tool_loop_max).then(() => {
+        setLimitsSaved(true);
+        setTimeout(() => setLimitsSaved(false), 1500);
+      }).catch(() => {});
+    }, 300);
+  };
+  const toolEnvRef = useRef(null);
+  const saveToolEnv = (next) => {
+    setToolEnv(next);
+    if (toolEnvRef.current) clearTimeout(toolEnvRef.current);
+    toolEnvRef.current = setTimeout(() => {
+      api.setToolEnvSettings(next.tool_timeout_secs, next.default_shell).then(() => {
+        setToolEnvSaved(true);
+        setTimeout(() => setToolEnvSaved(false), 1500);
+      }).catch(() => {});
+    }, 300);
+  };
+  const saveBehavior = (next) => {
+    setBehavior(next);
+    api
+      .setBehaviorSettings(next.auto_drive, next.tool_approval, next.moderation_enabled, next.auto_delegate, next.compat_mode, next.subagent_max)
+      .catch(() => {});
+  };
+  // 敏感词表：按行/中英文逗号/分号切分。空文本=空数组=恢复内置默认
+  const wordsToList = (text) =>
+    text
+      .split(/[\n,，;；]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const wordsCount = (text) => wordsToList(text).length;
+  const saveWords = (list) => {
+    api
+      .setBehaviorSettings(behavior.auto_drive, behavior.tool_approval, behavior.moderation_enabled, behavior.auto_delegate, behavior.compat_mode, behavior.subagent_max, list)
+      .then(() => {
+        setWordsSaved(true);
+        setTimeout(() => setWordsSaved(false), 1500);
+        setWordsDirty(false);
+        if (!list.length) {
+          // 恢复内置默认：重新拉取内置词表展示
+          api
+            .getBehaviorSettings()
+            .then((r) => {
+              setWordsText((r?.blocked_words || []).join("\n"));
+              setWordsCustom(false);
+            })
+            .catch(() => {});
+        } else {
+          setWordsCustom(true);
+          setWordsText(list.join("\n"));
+        }
+      })
+      .catch(() => {});
+  };
+
+  // 自动运行圆钮：状态以后端返回为准，失败保持原状
+  const toggleAutoRun = async () => {
+    try {
+      const r = await api.toggleAutopilot();
+      setAutoRun(!!r?.running);
+      onStats?.();
+    } catch {
+      // 切换失败：保持原状态，不打扰用户
+    }
+  };
+
+  const editing = form.id !== null;
+
+  // 选协议时自动带出该协议的默认 base_url / model（仅当用户未填时）
+  const pickProtocol = (protocol) => {
+    const proto = PROTOCOLS.find((p) => p.id === protocol);
+    setForm((f) => ({
+      ...f,
+      protocol,
+      base_url: f.base_url && f.id ? f.base_url : proto?.base || "",
+      model: f.model && f.id ? f.model : proto?.model || "",
+    }));
+  };
+
+  // 选预设：一键填充协议 / Base URL / 模型 / 名称（Key 需用户自填）
+  const pickPreset = (preset) => {
+    setForm((f) => ({
+      ...f,
+      name: preset.name,
+      protocol: preset.protocol,
+      base_url: preset.base,
+      model: preset.model,
+    }));
+    setRemoteModels(null);
+    setFetchModelsErr("");
+    setError("");
+  };
+
+  // 从提供方 API 拉取可用模型列表（需先填 Base URL 与 API Key）
+  const fetchModels = async () => {
+    setFetchingModels(true);
+    setFetchModelsErr("");
+    setBaseHint("");
+    try {
+      // 后端返回 {base, models}：base 为自动检测后的生效端点（如补了 /v1）
+      const res = await api.listProviderModels(form.protocol, form.base_url, form.api_key);
+      const list = Array.isArray(res) ? res : res?.models || [];
+      setRemoteModels(list);
+      const effective = Array.isArray(res) ? null : res?.base;
+      if (effective && effective !== form.base_url.trim().replace(/\/+$/, "")) {
+        setForm((f) => ({ ...f, base_url: effective }));
+        setBaseHint(t("ai.baseAutoFixed").replace("{base}", effective));
+      }
+    } catch (err) {
+      setRemoteModels(null);
+      setFetchModelsErr(String(err));
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      if (editing) {
+        await api.updateProvider(form.id, form.name, form.protocol, form.base_url, form.api_key, form.model);
+      } else {
+        await api.addProvider(form.name, form.protocol, form.base_url, form.api_key, form.model);
+      }
+      setForm(EMPTY);
+      setShowForm(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      await load();
+      onStats?.();
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const startEdit = (p) => {
+    setForm({
+      id: p.id,
+      name: p.name,
+      protocol: p.protocol,
+      base_url: p.base_url,
+      api_key: p.api_key,
+      model: p.model,
+    });
+    setRemoteModels(null);
+    setFetchModelsErr("");
+    setError("");
+    setShowForm(true);
+  };
+
+  const remove = async (id) => {
+    await api.removeProvider(id);
+    if (form.id === id) setForm(EMPTY);
+    await load();
+    onStats?.();
+  };
+
+  // 播放/暂停：激活某项（互斥）或暂停当前项
+  const toggleActive = async (p, next) => {
+    await api.setProviderActive(p.id, next);
+    await load();
+    onStats?.();
+  };
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto">
+      <div>
+        <h2 className="text-lg font-semibold">{t("ai.title")}</h2>
+        <p className="text-xs text-neutral-500">
+          {t("ai.subtitle")}
+        </p>
+      </div>
+
+      {/* 运行总览 */}
+      {stats && (
+        <div className="card">
+          <p className="mb-3 text-xs font-medium text-neutral-900 dark:text-neutral-100">{t("ai.statsTitle")}</p>
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+            {[
+              [t("ai.statTools"), stats.tool_count],
+              [t("ai.statMemory"), stats.memory_count],
+              [t("ai.statSkills"), stats.skill_count],
+              [t("ai.statGoals"), stats.goal_count],
+              [t("ai.statTodos"), stats.todo_count],
+              [t("ai.statAudit"), stats.audit_count],
+            ].map(([label, n]) => (
+              <div key={label} className="text-center">
+                <div className="text-xl font-bold tabular-nums">{n ?? 0}</div>
+                <div className="text-[11px] text-neutral-500">{label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-200/70 pt-3 dark:border-neutral-800/70">
+            <span className="chip">{stats.ai_configured ? t("ai.aiActive") : t("ai.aiInactive")}</span>
+            <span className={`chip ${stats.remote?.enabled ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : ""}`}>
+              {stats.remote?.enabled ? `${t("ai.remoteOn")}${stats.remote.addr}` : t("ai.remoteOff")}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(EMPTY);
+                setError("");
+                setRemoteModels(null);
+                setFetchModelsErr("");
+                setShowForm(true);
+              }}
+              className="pill pill-hover text-xs"
+            >
+              + {t("ai.addProvider")}
+            </button>
+            <PillSwitch
+              size="sm"
+              checked={autoRun}
+              onChange={toggleAutoRun}
+              title={autoRun ? t("ai.autoOnTip") : t("ai.autoOffTip")}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 提供方列表 */}
+      <div className="flex flex-col gap-2">
+        {providers.length === 0 && (
+          <div className="card flex items-center justify-center gap-2 py-8 text-sm text-neutral-400">
+            <IconSettings size={16} />
+            {t("ai.emptyProviders")}
+          </div>
+        )}
+        {providers.map((p) => (
+          <div
+            key={p.id}
+            className={`card flex items-center gap-3 ${
+              p.active ? "border-neutral-900/40 dark:border-white/40" : ""
+            }`}
+          >
+            <PillSwitch
+              checked={p.active}
+              onChange={(next) => toggleActive(p, next)}
+              title={p.active ? t("ai.pauseTip") : t("ai.playTip")}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold">{p.name}</span>
+                <span className="chip shrink-0">{protoLabel(p.protocol)}</span>
+                {p.active && (
+                  <span className="chip shrink-0 border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
+                    {t("ai.inUse")}
+                  </span>
+                )}
+                {!p.api_key && (
+                  <span className="chip shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400">
+                    {t("ai.missingKey")}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 truncate font-mono text-[11px] text-neutral-500">
+                {p.model} · {p.base_url}
+              </p>
+            </div>
+            <button
+              onClick={() => startEdit(p)}
+              title={t("common.edit")}
+              className="rounded-full p-2 text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            >
+              <IconSettings size={15} />
+            </button>
+            <button
+              onClick={() => remove(p.id)}
+              title={t("common.delete")}
+              className="rounded-full p-2 text-neutral-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40"
+            >
+              <IconTrash size={15} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* 模型参数：思考强度 + 温度 */}
+      <div className="card flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">{t("ai.paramsTitle")}</p>
+          {paramsSaved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              {t("common.saved")}
+            </span>
+          )}
+        </div>
+
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.reasoningLabel")}</label>
+          <div className="flex gap-2">
+            {[
+              ["", t("ai.thinkDefault")],
+              ["low", t("ai.thinkLow")],
+              ["medium", t("ai.thinkMedium")],
+              ["high", t("ai.thinkHigh")],
+            ].map(([v, label]) => (
+              <button
+                key={v || "default"}
+                type="button"
+                onClick={() => saveParams({ ...params, reasoning_effort: v })}
+                className={`flex-1 rounded-full px-3 py-2 text-xs font-medium transition-all ${
+                  params.reasoning_effort === v
+                    ? "accent-solid"
+                    : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 px-2 text-[11px] text-neutral-400">{t("ai.reasoningHint")}</p>
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between px-2">
+            <label className="text-xs text-neutral-500">{t("ai.temperatureLabel")}</label>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => params.temperature !== null && saveParams({ ...params, temperature: null })}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  params.temperature === null
+                    ? "accent-solid"
+                    : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+                }`}
+              >
+                {t("ai.thinkDefault")}
+              </button>
+              <button
+                type="button"
+                onClick={() => (params.temperature === null ? saveParams({ ...params, temperature: 0.7 }) : saveParams({ ...params, temperature: Math.min(2, Math.max(0, params.temperature)) }))}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  params.temperature !== null
+                    ? "accent-solid"
+                    : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+                }`}
+              >
+                {t("ai.tempCustom")}
+              </button>
+            </div>
+          </div>
+          {params.temperature !== null ? (
+            <div className="flex items-center gap-3 px-2">
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value={params.temperature}
+                onChange={(e) => saveParams({ ...params, temperature: parseFloat(e.target.value) }, true)}
+                className="flex-1"
+              />
+              <span className="w-10 text-right text-xs tabular-nums">{params.temperature.toFixed(1)}</span>
+            </div>
+          ) : (
+            <p className="px-2 text-[11px] text-neutral-400">{t("ai.temperatureDefaultHint")}</p>
+          )}
+        </div>
+      </div>
+
+      {/* 幻觉防护：词重复 / 工具死循环熔断阈值（0=关闭），深浅主题沿用 field/card 变量 */}
+      <div className="card flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">{t("ai.guardTitle")}</p>
+            <p className="mt-0.5 text-xs text-neutral-500">{t("ai.guardDesc")}</p>
+          </div>
+          {limitsSaved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              {t("common.saved")}
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.guardWord")}</label>
+            <input
+              className="field tabular-nums"
+              type="number"
+              min="0"
+              max="10000"
+              value={limits.word_repeat_max}
+              onChange={(e) =>
+                saveLimits({ ...limits, word_repeat_max: Math.max(0, Math.min(10000, parseInt(e.target.value, 10) || 0)) })
+              }
+            />
+            <p className="mt-1 px-2 text-[11px] text-neutral-400">{t("ai.guardWordHint")}</p>
+          </div>
+          <div>
+            <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.guardTool")}</label>
+            <input
+              className="field tabular-nums"
+              type="number"
+              min="0"
+              max="10000"
+              value={limits.tool_loop_max}
+              onChange={(e) =>
+                saveLimits({ ...limits, tool_loop_max: Math.max(0, Math.min(10000, parseInt(e.target.value, 10) || 0)) })
+              }
+            />
+            <p className="mt-1 px-2 text-[11px] text-neutral-400">{t("ai.guardToolHint")}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 工具环境：自定义工具超时 / 默认 shell */}
+      <div className="card flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">工具环境</p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              自定义工具的执行超时与 agent 执行命令所用的 shell；AI 代码环境统一收纳在数据目录 toolhomes（python venv / node_modules 自动就绪）
+            </p>
+          </div>
+          {toolEnvSaved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              {t("common.saved")}
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block px-2 text-xs text-neutral-500">工具超时（秒）</label>
+            <input
+              className="field tabular-nums"
+              type="number"
+              min="10"
+              max="600"
+              value={toolEnv.tool_timeout_secs}
+              onChange={(e) =>
+                saveToolEnv({ ...toolEnv, tool_timeout_secs: Math.max(10, Math.min(600, parseInt(e.target.value, 10) || 120)) })
+              }
+            />
+            <p className="mt-1 px-2 text-[11px] text-neutral-400">默认 120，上限 600：鼠标/屏幕监听类长循环脚本建议调大</p>
+          </div>
+          <div>
+            <label className="mb-1 block px-2 text-xs text-neutral-500">默认 Shell</label>
+            <select
+              className="field"
+              value={toolEnv.default_shell}
+              onChange={(e) => saveToolEnv({ ...toolEnv, default_shell: e.target.value })}
+            >
+              <option value="">自动识别（推荐）</option>
+              {toolEnv.available_shells.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 px-2 text-[11px] text-neutral-400">留空自动选本机最顺手的（Windows 优先 pwsh，Unix 优先登录 shell）</p>
+          </div>
+        </div>
+      </div>
+
+      {/* AI 行为设置 */}
+      <div className="card flex flex-col gap-4">
+        <p className="text-sm font-medium">AI 行为设置</p>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm">自动推进（auto-drive）</p>
+            <p className="text-xs text-neutral-500">回合结束后若有未完成目标，自动续跑直到完成</p>
+          </div>
+          <PillSwitch
+            checked={behavior.auto_drive}
+            onChange={(v) => saveBehavior({ ...behavior, auto_drive: v })}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm">{t("ai.autoDelegate")}</p>
+            <p className="text-xs text-neutral-500">{t("ai.autoDelegateHint")}</p>
+          </div>
+          <PillSwitch
+            checked={!!behavior.auto_delegate}
+            onChange={(v) => saveBehavior({ ...behavior, auto_delegate: v })}
+          />
+        </div>
+
+        {behavior.auto_delegate && (
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm">{t("ai.subagentMax")}</p>
+              <p className="text-xs text-neutral-500">{t("ai.subagentMaxHint")}</p>
+            </div>
+            <input
+              className="field tabular-nums"
+              style={{ width: 76 }}
+              type="number"
+              min="1"
+              max="8"
+              value={behavior.subagent_max}
+              onChange={(e) =>
+                saveBehavior({
+                  ...behavior,
+                  subagent_max: Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 1)),
+                })
+              }
+            />
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm">兼容模式</p>
+            <p className="text-xs text-neutral-500">
+              默认走标准协议（原生工具调用）。开启后改用文本约定：注入 JSON 调用契约，
+              并识别回复中的单行 JSON 工具调用——用于不支持 tools 参数的端点
+            </p>
+          </div>
+          <PillSwitch
+            checked={!!behavior.compat_mode}
+            onChange={(v) => saveBehavior({ ...behavior, compat_mode: v })}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm">敏感词审核</p>
+            <p className="text-xs text-neutral-500">HTTP 对话端点输入/输出双向过滤</p>
+          </div>
+          <PillSwitch
+            checked={behavior.moderation_enabled}
+            onChange={(v) => saveBehavior({ ...behavior, moderation_enabled: v })}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-neutral-200/70 pt-3 dark:border-neutral-800/70">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-neutral-700 dark:text-neutral-300">审核词表</p>
+              <p className="text-xs text-neutral-500">
+                每行一个词（也支持逗号/分号分隔）。保存后整体替换内置词库；留空保存 = 恢复内置。关闭审核时不可编辑。
+              </p>
+            </div>
+            {wordsSaved && (
+              <span className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
+                <IconCheck size={14} />
+                已保存
+              </span>
+            )}
+          </div>
+          <textarea
+            className="field !rounded-lg min-h-[130px] resize-y font-mono text-xs leading-relaxed disabled:cursor-not-allowed disabled:opacity-50"
+            value={wordsText}
+            onChange={(e) => {
+              setWordsText(e.target.value);
+              setWordsDirty(true);
+            }}
+            placeholder={"每行一个词，例如：\n儿童色情\n制毒教程\nchild porn"}
+            disabled={!behavior.moderation_enabled}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] text-neutral-400 dark:text-neutral-500">
+              {behavior.moderation_enabled
+                ? wordsCustom
+                  ? `自定义词库 · ${wordsCount(wordsText)} 条（已替换内置）`
+                  : `内置默认词库 · ${wordsCount(wordsText)} 条`
+                : "审核已关闭，当前词表暂不生效"}
+            </span>
+            <div className="flex gap-2">
+              {wordsCustom && (
+                <button
+                  className="pill text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={!behavior.moderation_enabled}
+                  onClick={() => saveWords([])}
+                >
+                  恢复内置默认
+                </button>
+              )}
+              <button
+                className="pill pill-hover text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!behavior.moderation_enabled || !wordsDirty}
+                onClick={() => saveWords(wordsToList(wordsText))}
+              >
+                保存词表
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm">工具审批模式</p>
+            <p className="text-xs text-neutral-500">危险操作需要你确认</p>
+          </div>
+          <select
+            className="field !rounded-lg w-auto"
+            value={behavior.tool_approval}
+            onChange={(e) => saveBehavior({ ...behavior, tool_approval: e.target.value })}
+          >
+            <option value="ask">每次询问</option>
+            <option value="auto">自动审批（危险操作仍询问）</option>
+            <option value="allow_all">完全放行</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 系统提示词模板覆盖：完全替换内置 prompt；空=恢复默认 */}
+      <div className="card flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">系统提示词模板</p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              完全替换内置模板（包含 Conduct、工具说明等）。留空恢复默认。
+              运行时信息（目标/todo/解释器/memory/skills）会自动追加到末尾。
+            </p>
+          </div>
+          {systemPromptSaved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              已保存
+            </span>
+          )}
+        </div>
+        <textarea
+          className="field !rounded-lg min-h-[200px] resize-y font-mono text-xs leading-relaxed"
+          value={systemPrompt}
+          onChange={(e) => setSystemPrompt(e.target.value)}
+          placeholder="留空 = 使用内置模板。输入则完全覆盖，例如：&#10;你是我的专属编程助手。&#10;回答代码要完整可编译，先列出思路再给出实现。"
+        />
+        <div className="flex justify-end gap-2">
+          {systemPrompt && (
+            <button
+              className="pill text-xs"
+              onClick={() => {
+                setSystemPrompt("");
+                api.setSystemPrompt("").then(() => {
+                  setSystemPromptSaved(true);
+                  setTimeout(() => setSystemPromptSaved(false), 1500);
+                });
+              }}
+            >
+              恢复默认
+            </button>
+          )}
+          <button
+            className="pill pill-hover text-xs"
+            onClick={() => {
+              api.setSystemPrompt(systemPrompt).then(() => {
+                setSystemPromptSaved(true);
+                setTimeout(() => setSystemPromptSaved(false), 1500);
+              });
+            }}
+          >
+            保存
+          </button>
+        </div>
+      </div>
+
+      {/* 本机操控三件套（实验性）：AI 可截屏看屏 / 控鼠标 / 打字按键 */}
+      <div className="card flex flex-col gap-3">
+        <div>
+          <p className="text-sm font-medium">{t("ai.desktopToolsTitle")}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{t("ai.desktopToolsDesc")}</p>
+        </div>
+        {[
+          ["screen", "ai.desktopScreen"],
+          ["mouse", "ai.desktopMouse"],
+          ["keyboard", "ai.desktopKeyboard"],
+          ["diagram", "ai.desktopDiagram"],
+          ["viewimage", "ai.desktopViewimage"],
+        ].map(([key, label]) => (
+          <div key={key} className="flex items-center justify-between">
+            <p className="text-xs text-neutral-600 dark:text-neutral-400">{t(label)}</p>
+            <PillSwitch
+              checked={deskTools[key]}
+              onChange={(v) => {
+                const next = { ...deskTools, [key]: v };
+                setDeskTools(next);
+                api.setDesktopTools(next.screen, next.mouse, next.keyboard, next.diagram, next.viewimage).catch(() => {});
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* 写文件语法检查：写入/编辑 json、js、py 后自动体检，出错提醒模型与用户 */}
+      <div className="card flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("ai.syntaxCheckTitle")}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{t("ai.syntaxCheckDesc")}</p>
+        </div>
+        <PillSwitch
+          checked={syntaxCheck}
+          onChange={(v) => {
+            setSyntaxCheck(v);
+            api.setSyntaxCheck(v).catch(() => {});
+          }}
+        />
+      </div>
+
+      {/* 用户自定义提示词/人设：追加到 system prompt 开头 */}
+      <div className="card flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">自定义提示词 / 人设</p>
+            <p className="mt-0.5 text-xs text-neutral-500">追加到 system prompt 最开头，空则不注入</p>
+          </div>
+          {promptSaved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              已保存
+            </span>
+          )}
+        </div>
+        <textarea
+          className="field !rounded-lg min-h-[100px] resize-y font-mono text-xs leading-relaxed"
+          value={customPrompt}
+          onChange={(e) => setCustomPrompt(e.target.value)}
+          placeholder={`例如：\n你是一位严谨的 Rust 系统编程专家，回答时优先给出可编译的代码。\n你偏爱极简主义设计，讨厌冗余抽象。`}
+        />
+        <div className="flex justify-end gap-2">
+          {customPrompt && (
+            <button
+              className="pill text-xs"
+              onClick={() => {
+                setCustomPrompt("");
+                api.setCustomPrompt("").then(() => {
+                  setPromptSaved(true);
+                  setTimeout(() => setPromptSaved(false), 1500);
+                });
+              }}
+            >
+              清空
+            </button>
+          )}
+          <button
+            className="pill pill-hover text-xs"
+            onClick={() => {
+              api.setCustomPrompt(customPrompt).then(() => {
+                setPromptSaved(true);
+                setTimeout(() => setPromptSaved(false), 1500);
+              });
+            }}
+          >
+            保存
+          </button>
+        </div>
+      </div>
+
+      {/* 开机自动启动：登录系统后后台驻留（托盘），写入系统登录项 */}
+      <div className="card flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("ai.autostartTitle")}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{t("ai.autostartDesc")}</p>
+        </div>
+        <PillSwitch
+          checked={!!autostart}
+          disabled={autostart === null}
+          onChange={toggleAutostart}
+        />
+      </div>
+
+      {/* 全局快捷键：唤出主界面（窗口隐藏/最小化时也能系统级唤出） */}
+      <div className="card flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("ai.hotkeyTitle")}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{t("ai.hotkeyDesc")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <input
+            value={hotkey}
+            onChange={(e) => setHotkey(e.target.value)}
+            placeholder="Alt+Shift+B"
+            className="w-40 rounded-full border border-neutral-200 bg-transparent px-3 py-1.5 text-center font-mono text-xs outline-none focus:border-neutral-400 dark:border-neutral-700"
+          />
+          {hotkey && (
+            <button
+              className="text-xs text-neutral-400 hover:text-red-500"
+              title={t("ai.hotkeyClear")}
+              onClick={() => {
+                setHotkey("");
+                api.setHotkey("").then(() => setHotkeySaved(true)).catch(() => {});
+                setTimeout(() => setHotkeySaved(false), 1500);
+              }}
+            >
+              {t("common.clear") || "清空"}
+            </button>
+          )}
+          <button
+            className="pill pill-hover text-xs"
+            onClick={() => {
+              setHotkeyErr("");
+              api.setHotkey(hotkey).then(() => {
+                setHotkeySaved(true);
+                setTimeout(() => setHotkeySaved(false), 1500);
+              }).catch((e) => setHotkeyErr(String(e)));
+            }}
+          >
+            {hotkeySaved ? "✓" : t("common.save") || "保存"}
+          </button>
+        </div>
+      </div>
+      {hotkeyErr && <p className="-mt-2 text-xs text-red-500 dark:text-red-400">{hotkeyErr}</p>}
+
+      {/* 高权限模式：以管理员/root 身份重启（触发系统授权弹窗），提权后 AI 的 shell 等工具拥有管理员权限 */}
+      <div className="card flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("ai.elevTitle")}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{t("ai.elevDesc")}</p>
+          {elevErr && <p className="mt-1 text-xs text-red-500 dark:text-red-400">{elevErr}</p>}
+          {elevation?.active && !elevErr && (
+            <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">{t("ai.elevActive")}</p>
+          )}
+          {!elevation?.active && elevation?.enabled && !elevErr && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{t("ai.elevInactive")}</p>
+          )}
+        </div>
+        <PillSwitch
+          checked={!!elevation?.active}
+          disabled={!elevation}
+          onChange={toggleElevation}
+        />
+      </div>
+
+      {/* 新增 / 编辑表单：悬浮弹窗（点遮罩关闭），平时不占页面空间 */}
+      {showForm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => {
+            setForm(EMPTY);
+            setShowForm(false);
+          }}
+        >
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="card flex max-h-[85vh] w-full max-w-lg flex-col gap-4 overflow-y-auto shadow-xl">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">{editing ? t("ai.editProvider") : t("ai.addProvider")}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setForm(EMPTY);
+              setShowForm(false);
+            }}
+            className="flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+          >
+            <IconX size={13} />
+            {editing ? t("ai.cancelEdit") : t("common.close")}
+          </button>
+        </div>
+
+        {/* 主流模型预设：点选一键填充 */}
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.preset")}</label>
+          <div className="flex flex-wrap gap-1.5 px-2">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                onClick={() => pickPreset(preset)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  form.model === preset.model && form.base_url === preset.base
+                    ? "accent-solid"
+                    : "border-neutral-200 text-neutral-500 hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-500 dark:hover:text-white"
+                }`}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.protocol")}</label>
+          <div className="flex gap-2">
+            {PROTOCOLS.map((proto) => (
+              <button
+                key={proto.id}
+                type="button"
+                onClick={() => pickProtocol(proto.id)}
+                className={`flex-1 rounded-full px-3 py-2 text-xs font-medium transition-all ${
+                  form.protocol === proto.id
+                    ? "accent-solid"
+                    : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700"
+                }`}
+              >
+                {proto.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">{t("ai.nameLabel")}</label>
+          <input
+            className="field"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder={`${t("ai.nameExample")}${protoLabel(form.protocol)}`}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">Base URL</label>
+          <input
+            className="field font-mono"
+            value={form.base_url}
+            onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+            placeholder={PROTOCOLS.find((p) => p.id === form.protocol)?.base}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block px-2 text-xs text-neutral-500">API Key</label>
+          <input
+            className="field font-mono"
+            type="password"
+            value={form.api_key}
+            onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+            placeholder={form.protocol === "openai" ? "sk-…" : t("ai.keyPlaceholder")}
+          />
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between px-2">
+            <label className="text-xs text-neutral-500">{t("ai.model")}</label>
+            <button
+              type="button"
+              onClick={fetchModels}
+              disabled={fetchingModels || !form.base_url.trim()}
+              className="text-xs text-neutral-500 transition-colors hover:text-neutral-900 disabled:opacity-40 dark:hover:text-white"
+              title={t("ai.fetchModelsTip")}
+            >
+              {fetchingModels ? t("ai.fetchingModels") : t("ai.fetchModels")}
+            </button>
+          </div>
+          <input
+            className="field font-mono"
+            value={form.model}
+            onChange={(e) => setForm({ ...form, model: e.target.value })}
+            placeholder={PROTOCOLS.find((p) => p.id === form.protocol)?.model}
+          />
+          {fetchModelsErr && (
+            <p className="mt-1 px-2 text-[11px] text-red-600">{fetchModelsErr}</p>
+          )}
+          {baseHint && !fetchModelsErr && (
+            <p className="mt-1 px-2 text-[11px] text-emerald-600 dark:text-emerald-400">{baseHint}</p>
+          )}
+          {Array.isArray(remoteModels) && remoteModels.length > 0 && (
+            <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-neutral-200/80 dark:border-neutral-800">
+              {remoteModels.map((m) => {
+                const id = typeof m === "string" ? m : m.id;
+                const len = typeof m === "object" && m ? m.context_length : null;
+                const lenLabel = len ? ` · ${len >= 1024 ? `${Math.round(len / 1024)}K` : len} ctx` : "";
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, model: id }))}
+                    className={`block w-full px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+                      form.model === id ? "text-neutral-900 dark:text-white" : "text-neutral-500"
+                    }`}
+                  >
+                    {id}
+                    {lenLabel && <span className="float-right text-neutral-400">{lenLabel}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {Array.isArray(remoteModels) && remoteModels.length === 0 && (
+            <p className="mt-1 px-2 text-[11px] text-neutral-400">{t("ai.noModels")}</p>
+          )}
+        </div>
+
+        {error && <p className="px-2 text-xs text-red-600">{error}</p>}
+        <div className="flex items-center justify-end gap-3">
+          {saved && (
+            <span className="flex items-center gap-1 text-xs text-neutral-500">
+              <IconCheck size={14} />
+              {t("common.saved")}
+            </span>
+          )}
+          <button type="submit" className="pill pill-hover">
+            {editing ? <IconCheck size={14} /> : <IconPlus size={14} />}
+            {editing ? t("ai.saveChanges") : t("common.add")}
+          </button>
+        </div>
+      </form>
+        </div>
+      )}
+
+      {/* AI 自主能力说明 */}
+      <div className="card text-xs leading-relaxed text-neutral-500">
+        <p className="mb-2 font-medium text-neutral-900 dark:text-neutral-100">{t("ai.autonomyTitle")}</p>
+        <ul className="list-inside list-disc space-y-1">
+          <li>{t("ai.capTools")}</li>
+          <li>{t("ai.capPlan")}</li>
+          <li>{t("ai.capScript")}</li>
+          <li>{t("ai.capSkill")}</li>
+          <li>{t("ai.capInvoke")}</li>
+        </ul>
+        <p className="mt-3 border-t border-neutral-200/70 pt-2 text-neutral-500 dark:border-neutral-800/70">
+          {t("ai.memoryNote1")}
+          <b className="text-neutral-700 dark:text-neutral-300">{t("ai.memoryNote2")}</b>
+          {t("ai.memoryNote3")}
+        </p>
+      </div>
+    </div>
+  );
+}

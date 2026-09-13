@@ -1,0 +1,286 @@
+@import "tailwindcss";
+
+/* 深色模式走 .dark class 策略（由主题 store 控制 <html> 上的 class） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 设计令牌：药丸圆角、柔光阴影、统一缓动 */
+@theme {
+  --radius-pill: 9999px;
+  --radius-soft: 1rem;
+  --radius-softer: 1.5rem;
+
+  --shadow-pill: 0 2px 10px -3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-pill-hover: 0 12px 32px -8px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --shadow-card: 0 6px 24px -8px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 18px 50px -14px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.05);
+
+  --ease-pill: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* NETON 黑白胶囊设计基础层 */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  /* 触摸屏/触摸板滚动修复：根元素 none 禁止 WebView 根滚动视图的超视距回弹（rubber-band）。
+     注意不能全局给 * 加 contain：内层滚动容器到边界后滚动链被切断，
+     指针悬停其上时滚轮会"间歇失效"（外层不再接力滚动） */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+  /* 主题强调色：默认黑白胶囊；用户在调色盘选择后经内联样式覆盖 */
+  :root {
+    --accent: #171717;
+    --accent-fg: #ffffff;
+  }
+  .dark {
+    --accent: #f5f5f5;
+    --accent-fg: #171717;
+  }
+  body {
+    @apply antialiased;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  /* 覆盖 Tailwind v4 preflight 的默认背景色（它会给 body 加 opaque 底色）
+     同时 Tauri transparent 窗口需要整个 DOM 树全透明 */
+  html, body, #root {
+    background-color: transparent !important;
+  }
+  /* 默认外观：窗口透明，由 #root::before 根据 CSS 变量决定底色
+     --look-bg-color-light/dark 默认 transparent，启用外观定制后才会覆盖 */
+  #root::before {
+    background-color: var(--look-bg-color-light, transparent);
+    color-scheme: light;
+  }
+  .dark #root::before {
+    background-color: var(--look-bg-color-dark, transparent);
+    color-scheme: dark;
+  }
+  /* 滚动条：悬浮小胶囊。thumb 用透明边框内缩（background-clip: padding-box），
+     上下端不贴轨道两端、左右不贴容器边缘，圆角容器里也不会顶出圆角 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-neutral-300;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    min-height: 32px;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-neutral-700;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-neutral-400;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* 选中高亮：柔和半透明底色 + 保持原文字色，避免大范围反色 */
+  ::selection {
+    background-color: rgba(23, 23, 23, 0.12);
+    color: inherit;
+  }
+  .dark ::selection {
+    background-color: rgba(255, 255, 255, 0.18);
+    color: inherit;
+  }
+}
+
+/* 胶囊小圆片通用样式 */
+@layer components {
+  /* 实心主按钮：跟随主题强调色（默认亮色黑 / 暗色白） */
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full border
+      px-4 py-1.5 text-sm font-medium transition-all duration-200 select-none;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+    box-shadow: var(--shadow-pill);
+  }
+  .pill:hover {
+    filter: brightness(1.1);
+  }
+  /* 强调色实心面（导航选中 / 发送按钮 / 会话选中 / 开关选中） */
+  .accent-solid {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  /* 描边按钮 */
+  .pill-outline {
+    @apply inline-flex items-center gap-2 rounded-full border border-neutral-300
+      bg-white px-4 py-1.5 text-sm font-medium text-neutral-800
+      transition-all duration-200 select-none;
+  }
+  .dark .pill-outline {
+    @apply border-neutral-700 bg-neutral-950 text-neutral-100;
+  }
+  .pill-hover {
+    @apply hover:-translate-y-0.5 active:translate-y-0;
+    transition-timing-function: var(--ease-pill);
+  }
+  .pill:disabled,
+  .pill-outline:disabled {
+    @apply cursor-not-allowed opacity-40;
+    transform: none;
+  }
+  /* 卡片 */
+  .card {
+    @apply rounded-3xl border border-neutral-200 bg-neutral-100 p-5;
+    box-shadow: var(--shadow-card);
+  }
+  .dark .card {
+    @apply border-neutral-800 bg-neutral-900;
+  }
+  /* 数据小圆片 */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-neutral-300
+      bg-neutral-50 px-2.5 py-0.5 text-xs text-neutral-600;
+  }
+  .dark .chip {
+    @apply border-neutral-700 bg-neutral-900 text-neutral-300;
+  }
+  /* 输入框 */
+  .field {
+    @apply w-full rounded-full border border-neutral-300 bg-white px-4 py-2
+      text-sm text-neutral-900 outline-none transition-colors
+      focus:border-neutral-900 placeholder:text-neutral-400;
+  }
+  .dark .field {
+    @apply border-neutral-700 bg-neutral-950 text-neutral-100
+      focus:border-neutral-200 placeholder:text-neutral-500;
+  }
+  /* 圆形图标按钮（列表操作 / 标题栏） */
+  .icon-btn {
+    @apply flex h-9 w-9 items-center justify-center rounded-full
+      bg-neutral-100 text-neutral-600 transition-colors
+      hover:bg-neutral-200 hover:text-neutral-900;
+  }
+  .dark .icon-btn {
+    @apply bg-neutral-900 text-neutral-300 hover:bg-neutral-800 hover:text-white;
+  }
+
+  /* ========== 外观引擎：圆角/边框/阴影变量 ========== */
+  /* 默认卡片圆角：24px；无外观配置时就是原始值 */
+  #root {
+    position: relative;
+    isolation: isolate;
+  }
+  /* 让 card / pill / 外层容器的圆角可被 --look-*-radius 覆盖 */
+  .card {
+    border-radius: var(--look-card-radius, 1.5rem);
+  }
+  /* no-border：全局去边框 */
+  html.no-border .card,
+  html.no-border .pill,
+  html.no-border .chip {
+    border: none !important;
+  }
+  /* no-shadow：全局去阴影 */
+  html.no-shadow .card {
+    box-shadow: none !important;
+  }
+  html.no-shadow .pill {
+    box-shadow: none !important;
+  }
+}
+
+/* ========== 透明度联动：背景 < 100% 时卡片/按钮也半透明 ========== */
+/* 用 --look-card-alpha（默认 1.0）控制；不透明背景用 rgb 转换为 rgba */
+html.has-transparency .card {
+  background-color: rgba(245, 245, 245, var(--look-card-alpha, 0.85)) !important; /* neutral-100 */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+html.dark.has-transparency .card {
+  background-color: rgba(23, 23, 23, var(--look-card-alpha, 0.85)) !important; /* neutral-900 */
+}
+html.has-transparency .pill-outline {
+  background-color: rgba(255, 255, 255, var(--look-card-alpha, 0.85)) !important;
+}
+html.dark.has-transparency .pill-outline {
+  background-color: rgba(10, 10, 10, var(--look-card-alpha, 0.85)) !important;
+}
+html.has-transparency .chip {
+  background-color: rgba(250, 250, 250, var(--look-card-alpha, 0.85)) !important; /* neutral-50 */
+}
+html.dark.has-transparency .chip {
+  background-color: rgba(23, 23, 23, var(--look-card-alpha, 0.85)) !important;
+}
+html.has-transparency .field {
+  background-color: rgba(255, 255, 255, var(--look-card-alpha, 0.9)) !important;
+}
+html.dark.has-transparency .field {
+  background-color: rgba(10, 10, 10, var(--look-card-alpha, 0.9)) !important;
+}
+html.has-transparency .icon-btn {
+  background-color: rgba(245, 245, 245, var(--look-card-alpha, 0.85)) !important;
+}
+html.dark.has-transparency .icon-btn {
+  background-color: rgba(23, 23, 23, var(--look-card-alpha, 0.85)) !important;
+}
+
+/* 入场动画：轻微上浮 + 淡入（页眉仪表盘、会话行、工具卡片） */
+@keyframes NETON-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-rise {
+  animation: NETON-rise 0.28s var(--ease-pill) both;
+}
+
+/* ========== 背景（纯色 + 可选图片 + 透明度遮罩） ========== */
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-color: var(--look-bg-color-light, transparent);
+  background-image: var(--app-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  opacity: var(--look-bg-opacity, 1);
+  transition: background-color 0.2s ease, background-image 0.3s ease, opacity 0.3s ease;
+}
+.dark #root::before {
+  background-color: var(--look-bg-color-dark, transparent);
+}
+/* 半透明黑遮罩，确保背景图上的文字可读 */
+#root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: transparent;
+  pointer-events: none;
+}
+html.has-bg-image #root::after {
+  background: rgba(0, 0, 0, 0.35);
+}
+html.dark.has-bg-image #root::after {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* Markdown 正文里的 SVG（模型直接输出的图表等）：约束不超容器宽，等比缩放 */
+.md svg {
+  max-width: 100%;
+  height: auto;
+}
+.md table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.neton.netsec</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>NETON</name>
+  <summary>Network security analysis toolkit with port scanning, vulnerability detection, and more</summary>
+  <summary xml:lang="zh_CN">网络安全分析工具集，包含端口扫描、漏洞检测等功能</summary>
+  <description>
+    <p>
+      NETON is a comprehensive network security analysis toolkit.
+      It provides port scanning, password auditing, ARP device discovery,
+      SQL injection testing, CVE vulnerability search, domain analysis,
+      network topology mapping, NAT type detection, virus signature matching,
+      captcha recognition, and virtual browser integration.
+    </p>
+    <p xml:lang="zh_CN">
+      NETON 是一个综合性网络安全分析工具集。
+      提供端口扫描、密码审计、ARP设备发现、SQL注入测试、
+      CVE漏洞搜索、域名分析、网络拓扑测绘、NAT类型检测、
+      病毒特征匹配、验证码识别和虚拟浏览器集成等功能。
+    </p>
+    <ul>
+      <li>Network scanning: port scanner, ARP device discovery, topology analysis, NAT detection</li>
+      <li>Password security: brute-force testing, weak password analysis</li>
+      <li>Vulnerability detection: SQL injection testing, CVE vulnerability search</li>
+      <li>Domain analysis: DNS lookup, WHOIS query, subdomain enumeration</li>
+      <li>Visual tools: captcha recognition, virtual browser integration</li>
+      <li>Malware analysis: hash checking, signature matching</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.neton.netsec.desktop</launchable>
+  <developer id="neton">
+    <name>NETON Security Team</name>
+  </developer>
+  <url type="homepage">https://neton.security</url>
+  <url type="bugtracker">https://github.com/yxpil/neton/issues</url>
+  <url type="vcs-browser">https://github.com/yxpil/neton</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.6.18" date="2026-09-13">
+      <description>
+        <p>Initial NETON security-focused release with comprehensive network security toolkit.</p>
+      </description>
+    </release>
+  </releases>
+</component>

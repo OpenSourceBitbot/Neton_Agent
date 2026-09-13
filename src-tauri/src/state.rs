@@ -1,0 +1,403 @@
+// yxpil · NETON
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
+
+use crate::ai::AiConfig;
+use crate::audit::AuditEntry;
+
+/// 工具质量评估模块（挂在 state 下声明，避免 main.rs 被外部同步回退时丢 mod 声明）
+#[path = "toolstats.rs"]
+pub mod toolstats;
+
+/// 设备指纹与设备凭证（账号凭证 + 信道签名材料）
+#[path = "device.rs"]
+pub mod device;
+use crate::goal::{Goal, Todo};
+use crate::memory::{Memory, Skill};
+use crate::registry::ToolDef;
+use crate::runtime::Runtime;
+use crate::session::SessionStore;
+
+/// 会话累计的 token 用量与缓存命中统计（内存态，重启清零）
+#[derive(Default, Clone, Debug, Serialize)]
+pub struct CacheStats {
+    pub requests: u64,
+    pub prompt_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub completion_tokens: u64,
+    /// 上游返回过缓存统计字段的请求数（0 = 本会话命中率不可知，UI 显示「未知」）
+    pub cache_known_requests: u64,
+}
+
+impl CacheStats {
+    /// 提示词缓存命中率 = 命中缓存的输入 token / 总输入 token（0.0 ~ 1.0）。
+    /// 仅当上游确实上报过缓存字段时才有意义（cache_known_requests > 0）
+    pub fn hit_rate(&self) -> f64 {
+        if self.prompt_tokens == 0 {
+            0.0
+        } else {
+            self.cache_read_tokens as f64 / self.prompt_tokens as f64
+        }
+    }
+}
+
+/// 把单次请求用量累计进会话统计，返回累计值。
+/// 端点未返回用量（全 0）时不计入，避免拉低命中率可信度
+pub fn record_usage(ctx: &Arc<Ctx>, session: &str, usage: &crate::ai::TokenUsage) -> CacheStats {
+    if usage.prompt_tokens == 0 && usage.completion_tokens == 0 {
+        let map = ctx.cache_stats.lock().unwrap();
+        if let Some(s) = map.get(session) {
+            return s.clone();
+        }
+        return CacheStats::default();
+    }
+    let mut map = ctx.cache_stats.lock().unwrap();
+    let e = map.entry(session.to_string()).or_default();
+    e.requests += 1;
+    e.prompt_tokens += usage.prompt_tokens;
+    e.cache_read_tokens += usage.cache_read_tokens;
+    e.cache_write_tokens += usage.cache_write_tokens;
+    e.completion_tokens += usage.completion_tokens;
+    if usage.cache_known {
+        e.cache_known_requests += 1;
+    }
+    e.clone()
+}
+
+pub struct Ctx {
+    pub app: tauri::AppHandle,
+    pub data_dir: PathBuf,
+    pub config: Mutex<crate::config::Config>,
+    pub ai_config: Mutex<AiConfig>,
+    pub tools: Mutex<Vec<ToolDef>>,
+    pub runtimes: Mutex<Vec<Runtime>>,
+    pub audit: Mutex<Vec<AuditEntry>>,
+    pub memories: Mutex<Vec<Memory>>,
+    pub skills: Mutex<Vec<Skill>>,
+    pub goals: Mutex<Vec<Goal>>,
+    pub todos: Mutex<Vec<Todo>>,
+    pub sessions: Mutex<SessionStore>,
+    /// sessions.json 上次已知 mtime：判断文件是否被其他进程（NETON 命令行等）改过
+    pub sessions_disk_ts: Mutex<Option<std::time::SystemTime>>,
+    /// 已接入的 MCP 服务器（Streamable HTTP）
+    pub mcp: Mutex<Vec<crate::mcp::McpServer>>,
+    /// 本地插件列表（toolhomes/plugins/*/plugin.json）
+    pub plugins: Mutex<Vec<crate::plugins::Plugin>>,
+    /// NETON 作为 MCP 服务器时分配的会话（session_id → 最后活跃时刻）。
+    /// 内存态：进程重启即失效，客户端需重新 initialize
+    pub mcp_sessions: Mutex<HashMap<String, std::time::Instant>>,
+    /// 小圆片播放/暂停状态（true = 播放，自动总结进行中）
+    pub autopilot_running: AtomicBool,
+    /// 会话中断标志（session_id → flag），chat_interrupt 置位后执行循环在检查点停止
+    pub interrupts: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// 同会话回合互斥：同一会话同时只允许一个对话回合在跑，防止并发回合交错写会话历史
+    pub turn_locks: Mutex<HashMap<String, ()>>,
+    /// 提示词缓存命中率统计（session_id → 累计用量）。内存态，重启清零
+    pub cache_stats: Mutex<HashMap<String, CacheStats>>,
+    /// 待审批工具调用（request_id → 应答通道 + 元信息，供审批列表接口展示）
+    pub approvals: Mutex<HashMap<String, PendingApproval>>,
+    /// 审批请求自增 id
+    pub approval_seq: AtomicU64,
+    pub server_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// 云中继客户端循环句柄（随远程服务启停）
+    pub relay_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// 远程端口被占用自动切换时的原端口（内存态；正常绑定即清空，前端启动时查询展示提示）
+    pub port_switch: Mutex<Option<u16>>,
+    /// 目标自动推进计数（goal_id → 已自动续跑轮数，防空转；目标完成后残留条目无害）
+    pub auto_drive_counts: Mutex<HashMap<String, u32>>,
+    /// 远程对话限速：客户端标识（IP）→ 最近请求时刻滑动窗口。内存态，重启清零
+    pub chat_rate: Mutex<HashMap<String, std::collections::VecDeque<std::time::Instant>>>,
+    /// 每 IP 并发在途对话请求计数（IP → 计数）。防单 IP 洪泛占满对话通道；请求结束即递减
+    pub active_per_ip: Mutex<HashMap<String, u32>>,
+    /// NETONsign 验签的 nonce 重放缓存（信道防护：同一签名 nonce 只允许用一次）
+    pub nonce_seen: Mutex<crate::security::NonceCache>,
+    /// 工具质量统计：tool_id → 成功率等（内存态 + tool_stats.json 落盘）
+    pub tool_stats: Mutex<toolstats::Store>,
+    /// 工作区沙箱根（运行时）：TUI 启动时默认锚定进程 cwd；None = 不限制（桌面端默认）。
+    /// config.workspace_root 可显式指定；shell 未传 cwd 时以此兜底，文件工具路径禁止逃逸
+    pub workspace_root: Mutex<Option<PathBuf>>,
+    /// 进程启动时刻（诊断报告的运行时长）
+    pub started: std::time::Instant,
+}
+
+pub const AUDIT_MAX: usize = 2000;
+pub const CHAT_MAX: usize = 200;
+
+/// 一条待审批的工具调用：应答通道 + 展示用元信息（工具名 / 参数 / 发起时刻）
+pub struct PendingApproval {
+    pub tx: tokio::sync::oneshot::Sender<bool>,
+    pub tool: String,
+    pub params: serde_json::Value,
+    pub created: std::time::Instant,
+}
+
+impl Ctx {
+    /// 图片缓存目录（数据目录下 images/）：模型生成图片 / 工具产图的统一落盘位置，
+    /// 系统提示词会把该路径告知模型作为工作区
+    pub fn image_dir(&self) -> PathBuf {
+        let d = self.data_dir.join("images");
+        fs::create_dir_all(&d).ok();
+        d
+    }
+
+    pub fn load(app: tauri::AppHandle) -> Arc<Ctx> {
+        // NETON_DATA_DIR：测试/E2E 用的数据目录覆盖（隔离环境验证默认配置），未设置走 Tauri 标准 app_data_dir
+        let data_dir = match std::env::var("NETON_DATA_DIR") {
+            Ok(dir) if !dir.trim().is_empty() => std::path::PathBuf::from(dir),
+            _ => app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir"),
+        };
+        fs::create_dir_all(&data_dir).ok();
+
+        let config = crate::config::Config::load(&data_dir);
+        let ai_config: AiConfig = read_json(&data_dir.join("ai_config.json")).unwrap_or_default();
+        let tools: Vec<ToolDef> =
+            read_json(&data_dir.join("tools.json")).unwrap_or_default();
+        let audit: Vec<AuditEntry> = read_json(&data_dir.join("audit.json"))
+            .unwrap_or_default();
+        let mut memories: Vec<Memory> =
+            read_json(&data_dir.join("memories.json")).unwrap_or_default();
+        let mut skills: Vec<Skill> = read_json(&data_dir.join("skills.json")).unwrap_or_default();
+        let mut goals: Vec<Goal> = read_json(&data_dir.join("goals.json")).unwrap_or_default();
+        let mut todos: Vec<Todo> = read_json(&data_dir.join("todos.json")).unwrap_or_default();
+        // 一次性迁移：旧 32 位 hex uuid id → 短数字 id（幂等，已是数字则保持）；
+        // todo.goal_id 引用同步重映射。提示词/面板可读性（对比 4dca90f7… → 3）
+        {
+            let mut gmap: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for (i, g) in goals.iter_mut().enumerate() {
+                let new = (i + 1).to_string();
+                if g.id != new {
+                    gmap.insert(g.id.clone(), new.clone());
+                    g.id = new;
+                }
+            }
+            for (i, t) in todos.iter_mut().enumerate() {
+                if let Some(gid) = t.goal_id.as_ref() {
+                    if let Some(n) = gmap.get(gid) {
+                        t.goal_id = Some(n.clone());
+                    }
+                }
+                t.id = (i + 1).to_string();
+            }
+            for (i, m) in memories.iter_mut().enumerate() {
+                m.id = (i + 1).to_string();
+            }
+            for (i, s) in skills.iter_mut().enumerate() {
+                s.id = (i + 1).to_string();
+            }
+            for (path, v) in [
+                ("memories.json", serde_json::to_string(&memories).unwrap_or_default()),
+                ("skills.json", serde_json::to_string(&skills).unwrap_or_default()),
+                ("goals.json", serde_json::to_string(&goals).unwrap_or_default()),
+                ("todos.json", serde_json::to_string(&todos).unwrap_or_default()),
+            ] {
+                let _ = fs::write(data_dir.join(path), v);
+            }
+        }
+        let sessions = SessionStore::load(&data_dir);
+        let mcp: Vec<crate::mcp::McpServer> =
+            read_json(&data_dir.join("mcp_servers.json")).unwrap_or_default();
+
+        // 内置工具随版本演进：始终以当前出厂的内置工具为准，
+        // 移除历史遗留的内置项，保留用户 / AI 自建的工具，再把最新内置放到最前。
+        let tools = {
+            let builtin = crate::registry::builtin_tools();
+            let builtin_names: std::collections::HashSet<String> =
+                builtin.iter().map(|t| t.name.clone()).collect();
+            let mut custom: Vec<ToolDef> = tools
+                .into_iter()
+                .filter(|t| {
+                    !matches!(t.kind, crate::registry::ToolKind::Builtin { .. })
+                        && !builtin_names.contains(&t.name)
+                })
+                .collect();
+            let mut merged = builtin;
+            merged.append(&mut custom);
+            let _ = fs::write(
+                data_dir.join("tools.json"),
+                serde_json::to_string_pretty(&merged).unwrap(),
+            );
+            merged
+        };
+
+        // 解释器列表：每次启动都重新探测本机（自动发现新装的语言），
+        // 同时沿用旧列表里的启用状态，并保留用户手动添加的项。
+        let cached: Vec<Runtime> =
+            read_json(&data_dir.join("runtimes.json")).unwrap_or_default();
+        // 解释器列表：启动时直接用缓存（探测在后台进行，不阻塞窗口显示），
+        // 后台 refresh_runtimes() 完成后更新状态并通知前端
+        let runtimes: Vec<Runtime> = cached;
+        // data_dir 要 move 进 Ctx，工具统计先读出来
+        let tool_stats: toolstats::Store =
+            read_json(&data_dir.join("tool_stats.json")).unwrap_or_default();
+
+        Arc::new(Ctx {
+            app,
+            data_dir,
+            config: Mutex::new(config),
+            ai_config: Mutex::new(ai_config),
+            tools: Mutex::new(tools),
+            runtimes: Mutex::new(runtimes),
+            audit: Mutex::new(audit),
+            memories: Mutex::new(memories),
+            skills: Mutex::new(skills),
+            goals: Mutex::new(goals),
+            todos: Mutex::new(todos),
+            sessions: Mutex::new(sessions),
+            sessions_disk_ts: Mutex::new(None),
+            mcp: Mutex::new(mcp),
+            // 本地插件列表（toolhomes/plugins/*/plugin.json，启动/重扫时刷新）
+            plugins: Mutex::new(Vec::new()),
+            mcp_sessions: Mutex::new(HashMap::new()),
+            interrupts: Mutex::new(HashMap::new()),
+            turn_locks: Mutex::new(HashMap::new()),
+            cache_stats: Mutex::new(HashMap::new()),
+            approvals: Mutex::new(HashMap::new()),
+            approval_seq: AtomicU64::new(1),
+            autopilot_running: AtomicBool::new(false),
+            server_task: Mutex::new(None),
+            relay_task: Mutex::new(None),
+            port_switch: Mutex::new(None),
+            auto_drive_counts: Mutex::new(HashMap::new()),
+            chat_rate: Mutex::new(HashMap::new()),
+            active_per_ip: Mutex::new(HashMap::new()),
+            nonce_seen: Mutex::new(crate::security::NonceCache::new(
+                std::time::Duration::from_secs(crate::security::NETONSIGN_TS_WINDOW as u64),
+                8192,
+            )),
+            tool_stats: Mutex::new(tool_stats),
+            workspace_root: Mutex::new(None),
+            started: std::time::Instant::now(),
+        })
+    }
+
+    pub fn save_config(&self) {
+        let cfg = self.config.lock().unwrap();
+        cfg.save(&self.data_dir);
+    }
+
+    /// 后台重新探测本机解释器（保留启用状态与手动添加项）。
+    /// 返回列表是否发生变化（由调用方决定是否通知前端）。
+    pub fn refresh_runtimes(&self) -> bool {
+        let cached: Vec<Runtime> =
+            read_json(&self.data_dir.join("runtimes.json")).unwrap_or_default();
+        let prev_enabled: std::collections::HashMap<String, bool> =
+            cached.iter().map(|r| (r.id.clone(), r.enabled)).collect();
+        let manual: Vec<Runtime> = cached.iter().filter(|r| r.manual).cloned().collect();
+        let mut runtimes = crate::runtime::detect();
+        for r in runtimes.iter_mut() {
+            if let Some(&en) = prev_enabled.get(&r.id) {
+                r.enabled = en;
+            }
+        }
+        for m in manual {
+            if !runtimes.iter().any(|r| r.id == m.id) {
+                runtimes.push(m);
+            }
+        }
+        let changed = serde_json::to_string(&runtimes).unwrap()
+            != serde_json::to_string(&cached).unwrap();
+        let _ = fs::write(
+            self.data_dir.join("runtimes.json"),
+            serde_json::to_string_pretty(&runtimes).unwrap(),
+        );
+        *self.runtimes.lock().unwrap() = runtimes;
+        changed
+    }
+
+    pub fn save_ai_config(&self) {
+        let cfg = self.ai_config.lock().unwrap();
+        let _ = fs::write(
+            self.data_dir.join("ai_config.json"),
+            serde_json::to_string_pretty(&*cfg).unwrap(),
+        );
+        drop(cfg);
+        // 必须通知 worker 重读：worker 的 ai_config 是启动时一次性加载的，
+        // 漏通知会导致"设置里换了 provider，worker 还打旧端点"→ 旧端点限流/欠费时
+        // 每条消息先冒 429 失败气泡（worker 报错 → engine 回退 host 用新配置重跑成功）
+        crate::worker::notify_reload();
+    }
+
+    pub fn save_tools(&self) {
+        let tools = self.tools.lock().unwrap();
+        let _ = fs::write(
+            self.data_dir.join("tools.json"),
+            serde_json::to_string_pretty(&*tools).unwrap(),
+        );
+        drop(tools);
+        // 热加载：通知前端工具清单已变化（AI 注册/更新/删除/启停工具后页面即时刷新）
+        use tauri::Emitter;
+        let _ = crate::worker::emit_ui(&self.app, "tools-updated", serde_json::json!({}));
+        // worker 模式下宿主保存工具后同步通知 worker 重读磁盘
+        crate::worker::notify_reload();
+    }
+
+    pub fn save_runtimes(&self) {
+        let runtimes = self.runtimes.lock().unwrap();
+        let _ = fs::write(
+            self.data_dir.join("runtimes.json"),
+            serde_json::to_string_pretty(&*runtimes).unwrap(),
+        );
+    }
+
+    pub fn save_sessions(&self) {
+        let store = self.sessions.lock().unwrap();
+        let _ = fs::write(
+            self.data_dir.join("sessions.json"),
+            serde_json::to_string(&*store).unwrap(),
+        );
+        drop(store);
+        *self.sessions_disk_ts.lock().unwrap() = fs::metadata(self.data_dir.join("sessions.json"))
+            .and_then(|m| m.modified())
+            .ok();
+    }
+
+    pub fn save_mcp(&self) {
+        let mcp = self.mcp.lock().unwrap();
+        let _ = fs::write(
+            self.data_dir.join("mcp_servers.json"),
+            serde_json::to_string_pretty(&*mcp).unwrap(),
+        );
+    }
+}
+
+pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> Option<T> {
+    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+impl Serialize for Ctx {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("Ctx")
+    }
+}
+
+#[cfg(test)]
+mod read_json_tests {
+    use super::*;
+
+    /// 配置/数据文件缺失 → None（上层 unwrap_or_default 走默认值，不 panic）
+    #[test]
+    fn missing_file_is_none() {
+        assert!(read_json::<serde_json::Value>(std::path::Path::new("/nonexistent/NETON-x.json")).is_none());
+    }
+
+    /// 文件损坏（非法 JSON）→ None，同样不 panic
+    #[test]
+    fn malformed_json_is_none() {
+        let dir = std::env::temp_dir().join("NETON-readjson-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("broken.json");
+        std::fs::write(&p, "{not valid json").unwrap();
+        assert!(read_json::<serde_json::Value>(&p).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

@@ -1,0 +1,92 @@
+﻿name: flatpak-build
+
+# 构建 Flatpak 包并产出 .flatpak bundle（后续可 PR 到 Flathub 上架）
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "packaging/flatpak/**"
+      - "src/**"
+      - "src-tauri/**"
+      - "package.json"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # gh release upload 需要 contents:write（GitHub 默认只给 read，403: Resource not accessible by integration）
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Flatpak 工具链
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive \
+            org.gnome.Platform//48 \
+            org.gnome.Sdk//48 \
+            org.freedesktop.Sdk.Extension.rust-stable//24.08 \
+            org.freedesktop.Sdk.Extension.node22//24.08
+          # 注意：扩展分支按 GNOME 运行时的 freedesktop 基座版本（48→24.08），
+          # Flathub 上不存在 rust-stable/node22 的 //48 分支
+
+      - name: 拉取 Flathub 共享模块（manifest include 相对路径所需）
+        run: git clone --depth 1 https://github.com/flathub/shared-modules.git packaging/flatpak/shared-modules
+
+      # 共享模块链的 cmake 模块（ayatana-ido / libayatana-indicator / libayatana-appindicator）
+      # 未设 CMAKE_INSTALL_LIBDIR，freedesktop 24.08 上默认装进 lib64，
+      # 导致 ayatana-indicator3-0.4.pc 不在 PKG_CONFIG_PATH → appindicator 配置失败。
+      - name: 补丁共享模块（强制 lib 目录）
+        run: |
+          python3 - <<'PY'
+          import json
+          p = "packaging/flatpak/shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json"
+          d = json.load(open(p))
+          def fix(m):
+              if isinstance(m, dict):
+                  if m.get("buildsystem") == "cmake-ninja":
+                      opts = m.setdefault("config-opts", [])
+                      if "-DCMAKE_INSTALL_LIBDIR=lib" not in opts:
+                          opts.append("-DCMAKE_INSTALL_LIBDIR=lib")
+                  for sub in m.get("modules", []):
+                      fix(sub)
+          fix(d)
+          json.dump(d, open(p, "w"), indent=2)
+          print("patched: CMAKE_INSTALL_LIBDIR=lib")
+          PY
+
+      # 沙盒内 npm 访问 registry 会黑洞挂死（8 分钟后 Exit handler never called）。
+      # 宿主机预热 npm 缓存目录：flatpak-builder 对 dir 源按 .gitignore 过滤拷贝，
+      # .npm-flatpak-cache 未被忽略会带入沙盒，沙盒内 --offline 纯缓存安装零网络依赖
+      - name: 宿主机预热 npm 缓存
+        run: npm install --cache .npm-flatpak-cache --no-audit --no-fund
+
+      - name: 构建 Flatpak
+        # 沙盒联网在 manifest 的 NETON 模块 build-options.build-args 加 --share=network
+        # （flatpak-builder CLI 无此选项；build-args 透传给底层 flatpak build），
+        # cargo 拉 crates.io 必须联网；npm 已走离线缓存不依赖网络
+        run: flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/space.osbt.NETON.yml
+
+      - name: 导出 bundle
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          flatpak build-bundle repo "NETON-$VERSION.flatpak" space.osbt.NETON
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: NETON-*.flatpak
+
+      # v* 标签构建时直接挂到对应 Release（0.5.7/0.5.8 曾因只产 artifact 忘传 bundle）
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release upload "$GITHUB_REF_NAME" "NETON-$VERSION.flatpak" --clobber -R "$GITHUB_REPOSITORY"
+          echo "已上传 NETON-$VERSION.flatpak → $GITHUB_REF_NAME"
